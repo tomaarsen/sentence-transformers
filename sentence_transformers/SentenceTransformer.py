@@ -419,7 +419,10 @@ class SentenceTransformer(nn.Sequential, FitMixin):
                 all_embeddings = torch.Tensor()
         elif convert_to_numpy:
             if not isinstance(all_embeddings, np.ndarray):
-                all_embeddings = np.asarray([emb.numpy() for emb in all_embeddings])
+                if all_embeddings[0].dtype == torch.bfloat16:
+                    all_embeddings = np.asarray([emb.float().numpy() for emb in all_embeddings])
+                else:
+                    all_embeddings = np.asarray([emb.numpy() for emb in all_embeddings])
         elif isinstance(all_embeddings, np.ndarray):
             all_embeddings = [torch.from_numpy(embedding) for embedding in all_embeddings]
 
@@ -1136,9 +1139,11 @@ class SentenceTransformer(nn.Sequential, FitMixin):
             modules[module_config["name"]] = module
 
         if revision is None:
-            revision_path_part = Path(modules_json_path).parts[-2]
-            if len(revision_path_part) == 40:
-                revision = revision_path_part
+            path_parts = Path(modules_json_path)
+            if len(path_parts.parts) >= 2:
+                revision_path_part = Path(modules_json_path).parts[-2]
+                if len(revision_path_part) == 40:
+                    revision = revision_path_part
         self.model_card_data.set_base_model(model_name_or_path, revision=revision)
         return modules
 
