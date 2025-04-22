@@ -11,7 +11,7 @@ from sentence_transformers import (
     SentenceTransformerTrainer,
     SentenceTransformerTrainingArguments,
 )
-from sentence_transformers.evaluation import NanoBEIREvaluator
+from sentence_transformers.evaluation import MTEBEvaluator
 from sentence_transformers.losses import MultipleNegativesRankingLoss
 from sentence_transformers.training_args import BatchSamplers
 
@@ -19,7 +19,7 @@ from sentence_transformers.training_args import BatchSamplers
 logging.basicConfig(format="%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S", level=logging.INFO)
 
 # You can specify any Hugging Face pre-trained model here, for example, bert-base-uncased, roberta-base, xlm-roberta-base
-model_name = sys.argv[1] if len(sys.argv) > 1 else "bert-base-uncased"
+model_name = sys.argv[1] if len(sys.argv) > 1 else "google-bert/bert-base-uncased"
 model_name_only = model_name.split("/")[-1]
 
 # 1. Load a model to finetune with 2. (Optional) model card data
@@ -52,14 +52,14 @@ eval_dataset: Dataset = dataset_dict["test"]
 loss = MultipleNegativesRankingLoss(model)
 
 # 5. (Optional) Specify training arguments
-run_name = f"{model_name_only}-gooaq-peft"
+run_name = f"{model_name_only}-gooaq-peft-mteb-evaluator"
 args = SentenceTransformerTrainingArguments(
     # Required parameter:
     output_dir=f"models/{run_name}",
     # Optional training parameters:
     num_train_epochs=1,
-    per_device_train_batch_size=1024,
-    per_device_eval_batch_size=1024,
+    per_device_train_batch_size=128,
+    per_device_eval_batch_size=128,
     learning_rate=2e-5,
     warmup_ratio=0.1,
     fp16=False,  # Set to False if you get an error that your GPU can't run on FP16
@@ -78,7 +78,8 @@ args = SentenceTransformerTrainingArguments(
 
 # 6. (Optional) Create an evaluator & evaluate the base model
 # The full corpus, but only the evaluation queries
-dev_evaluator = NanoBEIREvaluator(batch_size=1024)
+dev_evaluator = MTEBEvaluator(benchmark="NanoBEIR", batch_size=256)
+print(dev_evaluator)
 dev_evaluator(model)
 
 # 7. Create a trainer & train
