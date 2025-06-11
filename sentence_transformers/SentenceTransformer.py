@@ -193,7 +193,7 @@ class SentenceTransformer(nn.Sequential, FitMixin, PeftAdapterMixin):
         self.similarity_fn_name = similarity_fn_name
         self.trust_remote_code = trust_remote_code
         self.truncate_dim = truncate_dim
-        self.model_card_data = model_card_data or self.model_card_data_class()
+        self.model_card_data = model_card_data or self.model_card_data_class(local_files_only=local_files_only)
         self.module_kwargs = None
         self._model_card_vars = {}
         self._model_card_text = None
@@ -1671,9 +1671,8 @@ class SentenceTransformer(nn.Sequential, FitMixin, PeftAdapterMixin):
         # Save modules
         for idx, name in enumerate(self._modules):
             module: Module = self._modules[name]
-            if (
-                idx == 0 and hasattr(module, "save_in_root") and module.save_in_root
-            ):  # Save first module in the main folder
+            # Perhaps save the first module in the main folder
+            if idx == 0 and hasattr(module, "save_in_root") and module.save_in_root:
                 model_path = path + "/"
             else:
                 model_path = os.path.join(path, str(idx) + "_" + type(module).__name__)
