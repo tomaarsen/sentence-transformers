@@ -7,24 +7,33 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import torch
+from packaging.version import parse as parse_version
+from transformers import AutoConfig, AutoModel, AutoTokenizer, MT5Config, PretrainedConfig, T5Config
+from transformers import __version__ as transformers_version
+from transformers.utils.import_utils import is_peft_available
+from transformers.utils.peft_utils import find_adapter_config_file
+
 from sentence_transformers.backend import load_onnx_model, load_openvino_model
+from sentence_transformers.models.InputModule import InputModule
 
 try:
     from typing import Self
 except ImportError:
     from typing_extensions import Self
 
-import torch
-from transformers import AutoConfig, AutoModel, AutoTokenizer, MT5Config, PretrainedConfig, T5Config, T5Gemma2Config
-from transformers.utils.import_utils import is_peft_available
-from transformers.utils.peft_utils import find_adapter_config_file
-
-from sentence_transformers.models.InputModule import InputModule
-
-logger = logging.getLogger(__name__)
-
 if TYPE_CHECKING and is_peft_available():
     from peft import PeftConfig
+
+if parse_version(transformers_version) >= parse_version("5.0.0dev0"):
+    from transformers import T5Gemma2Config
+else:
+
+    class T5Gemma2Config:
+        pass
+
+
+logger = logging.getLogger(__name__)
 
 
 def _save_pretrained_wrapper(_save_pretrained_fn: Callable, subfolder: str) -> Callable[..., None]:
@@ -234,7 +243,9 @@ class Transformer(InputModule):
             model_name_or_path, config=config, cache_dir=cache_dir, **model_args
         )
 
-    def _load_t5gemma2_model(self, model_name_or_path: str, config: T5Gemma2Config, cache_dir: str, **model_args) -> None:
+    def _load_t5gemma2_model(
+        self, model_name_or_path: str, config: PretrainedConfig, cache_dir: str, **model_args
+    ) -> None:
         """Loads the encoder model from T5Gemma2"""
         from transformers import T5Gemma2Model
 
