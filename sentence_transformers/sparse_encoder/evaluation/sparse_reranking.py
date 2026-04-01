@@ -161,14 +161,14 @@ class SparseRerankingEvaluator(RerankingEvaluator):
 
         return metrics
 
-    def compute_metrices(self, model: SparseEncoder):
-        return super().compute_metrices(model)
+    def compute_metrics(self, model: SparseEncoder):
+        return super().compute_metrics(model)
 
-    def compute_metrices_batched(self, model: SparseEncoder):
-        return super().compute_metrices_batched(model)
+    def compute_metrics_batched(self, model: SparseEncoder):
+        return super().compute_metrics_batched(model)
 
-    def compute_metrices_individual(self, model: SparseEncoder):
-        return super().compute_metrices_individual(model)
+    def compute_metrics_individual(self, model: SparseEncoder):
+        return super().compute_metrics_individual(model)
 
     def embed_inputs(
         self,
