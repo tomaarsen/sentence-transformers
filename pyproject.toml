@@ -148,3 +148,10 @@ aas = "aas"
 sur = "sur"
 paria = "paria"
 ende = "ende"
+
+[tool.typos.type.py.extend-identifiers]
+# for backwards compatibility, as these were previously misspelled
+compute_metrices = "compute_metrices"
+eucledian_distance = "eucledian_distance"
+compute_metrices_batched = "compute_metrices_batched"
+compute_metrices_individual = "compute_metrices_individual"
