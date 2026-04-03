@@ -158,12 +158,6 @@ class SparseBinaryClassificationEvaluator(BinaryClassificationEvaluator):
 
         return metrics
 
-    def compute_metrices(self, model: SparseEncoder) -> dict[str, dict[str, float]]:
-        return super().compute_metrics(model=model)
-
-    def compute_metrics(self, model: SparseEncoder) -> dict[str, dict[str, float]]:
-        return super().compute_metrics(model=model)
-
     def embed_inputs(
         self,
         model: SparseEncoder,

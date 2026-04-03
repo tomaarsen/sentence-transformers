@@ -221,9 +221,6 @@ class BinaryClassificationEvaluator(BaseEvaluator):
         self.store_metrics_in_model_card_data(model, metrics, epoch, steps)
         return metrics
 
-    def compute_metrices(self, model: SentenceTransformer):
-        return self.compute_metrics(model)
-
     def compute_metrics(self, model: SentenceTransformer) -> dict[str, dict[str, float]]:
         try:
             # If the sentences are hashable, then we can use a set to avoid embedding the same sentences multiple
@@ -296,6 +293,9 @@ class BinaryClassificationEvaluator(BaseEvaluator):
             }
 
         return output_scores
+
+    # Backwards compatibility alias
+    compute_metrices = compute_metrics
 
     def embed_inputs(
         self,

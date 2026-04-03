@@ -296,17 +296,6 @@ class InformationRetrievalEvaluator(BaseEvaluator):
         self.store_metrics_in_model_card_data(model, metrics, epoch, steps)
         return metrics
 
-    def compute_metrices(
-        self,
-        model: SentenceTransformer,
-        corpus_model=None,
-        corpus_embeddings: Tensor | None = None,
-        output_path: str | None = None,
-    ) -> dict[str, float]:
-        return self.compute_metrics(
-            model, corpus_model=corpus_model, corpus_embeddings=corpus_embeddings, output_path=output_path
-        )
-
     def compute_metrics(
         self,
         model: SentenceTransformer,
@@ -425,6 +414,9 @@ class InformationRetrievalEvaluator(BaseEvaluator):
             self.output_scores(scores[name])
 
         return scores
+
+    # Backwards compatibility alias
+    compute_metrices = compute_metrics
 
     def embed_inputs(
         self,

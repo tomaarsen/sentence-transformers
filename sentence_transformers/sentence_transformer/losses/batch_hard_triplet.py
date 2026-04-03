@@ -19,11 +19,6 @@ class BatchHardTripletLossDistanceFunction:
         return 1 - pytorch_cos_sim(embeddings, embeddings)
 
     @staticmethod
-    def eucledian_distance(embeddings: Tensor) -> Tensor:
-        """Compute the 2D matrix of euclidean distances between all embeddings."""
-        return BatchHardTripletLossDistanceFunction.euclidean_distance(embeddings)
-
-    @staticmethod
     def euclidean_distance(embeddings: Tensor, squared=False) -> Tensor:
         """
         Compute the 2D matrix of euclidean distances between all the embeddings.
@@ -59,6 +54,9 @@ class BatchHardTripletLossDistanceFunction:
             distances = (1.0 - mask) * torch.sqrt(distances)
 
         return distances
+
+    # Backwards compatibility alias
+    eucledian_distance = euclidean_distance
 
 
 class BatchHardTripletLoss(nn.Module):

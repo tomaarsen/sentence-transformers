@@ -57,12 +57,6 @@ onnx-gpu = ["optimum-onnx[onnxruntime-gpu]"]
 openvino = ["optimum-intel[openvino]"]
 dev = ["datasets>=2.0.0", "accelerate>=0.20.3", "pre-commit", "pytest", "pytest-cov", "pytest-env", "pytest-subtests", "pytest-xdist", "peft", "transformers[vision,audio,video]"]
 
-[dependency-groups]
-lint = [
-    "typos>=1.45.0",
-]
-
-
 [build-system]
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"

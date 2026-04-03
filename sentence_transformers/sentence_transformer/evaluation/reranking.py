@@ -343,6 +343,11 @@ class RerankingEvaluator(BaseEvaluator):
 
         return {"map": mean_ap, "mrr": mean_mrr, "ndcg": mean_ndcg}
 
+    # Backwards compatibility aliases
+    compute_metrices = compute_metrics
+    compute_metrices_batched = compute_metrics_batched
+    compute_metrices_individual = compute_metrics_individual
+
     def embed_inputs(
         self,
         model: SentenceTransformer,
