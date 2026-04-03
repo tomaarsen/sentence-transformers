@@ -12,5 +12,5 @@ repos:
 - repo: https://github.com/crate-ci/typos
   rev: v1.45.0
   hooks:
-  - id: typos
-    args: ["--diff", "--force-exclude"]
+    - id: typos
+      args: ["--diff", "--force-exclude"]
