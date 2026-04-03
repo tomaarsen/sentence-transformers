@@ -6,6 +6,7 @@ import random
 import numpy as np
 import pytest
 import torch
+from packaging.version import parse as parse_version
 from torch.utils.data import ConcatDataset
 
 import sentence_transformers.base.sampler as sampler_module
@@ -13,7 +14,11 @@ from sentence_transformers.base.sampler import NoDuplicatesBatchSampler, Proport
 from sentence_transformers.util import is_datasets_available
 
 if is_datasets_available():
+    import datasets
     from datasets import Dataset
+
+    # datasets < 4.1.0 does not support num_proc=0
+    PRECOMPUTE_NUM_PROC = 0 if parse_version(datasets.__version__) >= parse_version("4.1.0") else 1
 else:
     pytest.skip(
         reason='Sentence Transformers was not installed with the `["train"]` extra.',
@@ -106,7 +111,7 @@ def test_group_by_label_batch_sampler_label_a(dummy_dataset: Dataset, precompute
             pytest.skip("xxhash not installed")
         sampler_kwargs = {
             "precompute_hashes": True,
-            "precompute_num_proc": 0,
+            "precompute_num_proc": PRECOMPUTE_NUM_PROC,
             "precompute_batch_size": 10,
         }
 
@@ -141,7 +146,7 @@ def test_proportional_no_duplicates(
             pytest.skip("xxhash not installed")
         sampler_kwargs = {
             "precompute_hashes": True,
-            "precompute_num_proc": 0,
+            "precompute_num_proc": PRECOMPUTE_NUM_PROC,
             "precompute_batch_size": 10,
         }
     sampler_1 = NoDuplicatesBatchSampler(
@@ -196,7 +201,7 @@ def test_no_duplicates_batch_sampler_matches_reference_algorithm(
             pytest.skip("xxhash not installed")
         sampler_kwargs = {
             "precompute_hashes": True,
-            "precompute_num_proc": 0,
+            "precompute_num_proc": PRECOMPUTE_NUM_PROC,
             "precompute_batch_size": 10,
         }
 
@@ -231,7 +236,7 @@ def test_no_duplicates_batch_sampler_precomputed_hashes_are_int64(dummy_dataset:
         drop_last=True,
         valid_label_columns=["label"],
         precompute_hashes=True,
-        precompute_num_proc=0,
+        precompute_num_proc=PRECOMPUTE_NUM_PROC,
         precompute_batch_size=10,
     )
     sampler._build_hashes()
@@ -263,7 +268,7 @@ def test_no_duplicates_batch_sampler_list_values_match_between_hash_and_non_hash
     hashed_sampler = NoDuplicatesBatchSampler(
         **sampler_kwargs,
         precompute_hashes=True,
-        precompute_num_proc=0,
+        precompute_num_proc=PRECOMPUTE_NUM_PROC,
         precompute_batch_size=2,
     )
 

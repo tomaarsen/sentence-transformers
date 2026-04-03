@@ -52,7 +52,9 @@ class SentenceTransformer(BaseModel, FitMixin):
             computation. If None, checks if a GPU can be used. Defaults to None.
         prompts (dict[str, str], optional): A dictionary with prompts for the model. The key is the prompt name,
             the value is the prompt text. The prompt text will be prepended before any text to encode. For example:
-            ``{"query": "query: ", "passage": "passage: "}``. Defaults to None.
+            ``{"query": "query: ", "passage": "passage: "}``. If a model has saved prompts, you can override
+            them by passing your own, or pass ``{"query": "", "document": ""}`` to disable them.
+            Defaults to None.
         default_prompt_name (str, optional): The name of the prompt that should be used by default. If not set,
             no prompt will be applied. Defaults to None.
         cache_folder (str, optional): Path to store models. Can also be set by the ``SENTENCE_TRANSFORMERS_HOME``
@@ -136,7 +138,7 @@ class SentenceTransformer(BaseModel, FitMixin):
 
     model_card_data_class = SentenceTransformerModelCardData
     default_huggingface_organization: str | None = "sentence-transformers"
-    _default_prompts: dict[str, str] = {"query": "", "document": ""}
+    _default_prompts: dict[str, str | None] = {"query": None, "document": None}
 
     @deprecated_kwargs(tokenizer_kwargs="processor_kwargs")
     def __init__(
@@ -558,7 +560,6 @@ class SentenceTransformer(BaseModel, FitMixin):
                 ht.hpu.wrap_in_hpu_graph(self, disable_tensor_cache=True)
                 self.is_hpu_graph_enabled = True
 
-        self.eval()
         if show_progress_bar is None:
             show_progress_bar = logger.getEffectiveLevel() in (logging.INFO, logging.DEBUG)
 
@@ -568,6 +569,9 @@ class SentenceTransformer(BaseModel, FitMixin):
         if output_value != "sentence_embedding":
             convert_to_tensor = False
             convert_to_numpy = False
+
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}.")
 
         # Cast an individual input to a list with length 1
         is_singular_input = self.is_singular_input(inputs)
@@ -625,6 +629,7 @@ class SentenceTransformer(BaseModel, FitMixin):
         if device is None:
             device = self.device
         self.to(device)
+        self.eval()
 
         truncate_dim = truncate_dim if truncate_dim is not None else self.truncate_dim
         all_embeddings = []
@@ -879,7 +884,7 @@ class SentenceTransformer(BaseModel, FitMixin):
                 elif isinstance(embeddings[0], np.ndarray):
                     embeddings = np.concatenate(embeddings, axis=0)
             elif convert_to_tensor:
-                embeddings = torch.Tensor()
+                embeddings = torch.tensor([])
             elif convert_to_numpy:
                 embeddings = np.array([])
             return embeddings
@@ -926,7 +931,7 @@ class SentenceTransformer(BaseModel, FitMixin):
 
     @deprecated("The `get_sentence_features` method is deprecated and will be removed in a future version.")
     def get_sentence_features(self, *features) -> dict[str, Tensor]:
-        return self._first_module().get_sentence_features(*features)
+        return self[0].get_sentence_features(*features)
 
     def get_embedding_dimension(self) -> int | None:
         """
@@ -1090,7 +1095,7 @@ class SentenceTransformer(BaseModel, FitMixin):
         config_kwargs: dict[str, Any] | None = None,
         model_type: str | None = None,
     ) -> tuple[list[nn.Module] | OrderedDict[str, nn.Module], dict[str, Any]]:
-        # Fallback for loading models saved as a different model type (e.g. CrossEncoder, SparseEncoder)
+        # Create default SentenceTransformer modules for models saved as a different model type (e.g. CrossEncoder, SparseEncoder)
         return super()._load_default_modules(
             model_name_or_path,
             token,

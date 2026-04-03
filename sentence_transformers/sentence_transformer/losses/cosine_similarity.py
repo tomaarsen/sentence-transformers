@@ -95,4 +95,7 @@ class CosineSimilarityLoss(nn.Module):
         return self.loss_fct(output, labels.float().view(-1))
 
     def get_config_dict(self) -> dict[str, Any]:
-        return {"loss_fct": fullname(self.loss_fct)}
+        return {
+            "loss_fct": fullname(self.loss_fct),
+            "cos_score_transformation": fullname(self.cos_score_transformation),
+        }

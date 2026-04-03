@@ -120,9 +120,9 @@ class MultipleNegativesRankingLoss(nn.Module):
     def call_model_with_pairs(
         self, pairs: list[list[str]], prompt: str | None = None, task: str | None = None
     ) -> Tensor:
-        tokens = self.model.preprocess(pairs, prompt=prompt, task=task)
-        tokens.to(self.model.device)
-        logits = self.model(tokens)["scores"]
+        inputs = self.model.preprocess(pairs, prompt=prompt, task=task)
+        inputs = inputs.to(self.model.device)
+        logits = self.model(inputs)["scores"]
         return logits.squeeze(1)
 
     def get_in_batch_negatives(

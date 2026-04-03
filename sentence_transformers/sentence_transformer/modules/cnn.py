@@ -50,7 +50,7 @@ class CNN(Module):
             )
             self.convs.append(conv)
 
-    def forward(self, features):
+    def forward(self, features: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         token_embeddings = features["token_embeddings"]
 
         token_embeddings = token_embeddings.transpose(1, -1)

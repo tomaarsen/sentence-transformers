@@ -134,33 +134,6 @@ The ``tokenizer_kwargs`` parameter on :class:`~sentence_transformers.sentence_tr
         )
 ```
 
-### Router task keys no longer used as input dictionary keys
-
-```{eval-rst}
-
-Models with a :class:`~sentence_transformers.base.modules.Router` module (e.g. asymmetric models with separate query/document encoders) previously accepted task types as dictionary keys in the input. This was softly deprecated in v5.0 (see :ref:`Migration for Asym to Router <migration-for-asym-to-router>`) and is now deprecated. Instead, pass the inputs directly and use the ``task`` parameter or the :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_query` / :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_document` convenience methods.
-
-.. list-table::
-   :widths: 50 50
-   :header-rows: 1
-
-   * - v5.x
-     - v5.4+ (recommended)
-   * - .. code-block:: python
-
-        model.encode({"query": "What is the capital?"})
-        model.encode({"document": "Paris is the capital."})
-
-     - .. code-block:: python
-
-        model.encode("What is the capital?", task="query")
-        model.encode("Paris is the capital.", task="document")
-
-        # Or equivalently:
-        model.encode_query("What is the capital?")
-        model.encode_document("Paris is the capital.")
-```
-
 ### CrossEncoder API changes
 
 ```{eval-rst}

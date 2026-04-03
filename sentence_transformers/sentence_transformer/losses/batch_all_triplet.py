@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from torch import Tensor, nn
 
@@ -135,6 +136,12 @@ class BatchAllTripletLoss(nn.Module):
         triplet_loss = triplet_loss.sum() / (num_positive_triplets + 1e-16)
 
         return triplet_loss
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "distance_metric": getattr(self.distance_metric, "__name__", str(self.distance_metric)),
+            "margin": self.triplet_margin,
+        }
 
     @property
     def citation(self) -> str:

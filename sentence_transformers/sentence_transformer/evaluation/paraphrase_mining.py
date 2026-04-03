@@ -200,7 +200,7 @@ class ParaphraseMiningEvaluator(BaseEvaluator):
             if self.duplicates[id1][id2] or self.duplicates[id2][id1]:
                 n_correct += 1
                 precision = n_correct / n_extract
-                recall = n_correct / self.total_num_duplicates
+                recall = n_correct / self.total_num_duplicates if self.total_num_duplicates > 0 else 0.0
                 f1 = 2 * precision * recall / (precision + recall)
                 average_precision += precision
                 if f1 > best_f1:
@@ -209,7 +209,7 @@ class ParaphraseMiningEvaluator(BaseEvaluator):
                     best_recall = recall
                     threshold = (pairs_list[idx][0] + pairs_list[min(idx + 1, len(pairs_list) - 1)][0]) / 2
 
-        average_precision = average_precision / self.total_num_duplicates
+        average_precision = average_precision / self.total_num_duplicates if self.total_num_duplicates > 0 else 0
 
         logger.info(f"Average Precision: {average_precision * 100:.2f}")
         logger.info(f"Optimal threshold: {threshold:.4f}")

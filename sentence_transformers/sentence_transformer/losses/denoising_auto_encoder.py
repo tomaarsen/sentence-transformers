@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from typing import Any
 
 from packaging.version import Version, parse
 from torch import Tensor, nn
@@ -212,6 +213,12 @@ class DenoisingAutoEncoderLoss(nn.Module):
         ce_loss_fct = nn.CrossEntropyLoss(ignore_index=self.tokenizer_decoder.pad_token_id)
         loss = ce_loss_fct(lm_logits.view(-1, lm_logits.shape[-1]), label_ids.reshape(-1))
         return loss
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "decoder_name_or_path": self.decoder.config._name_or_path,
+            "need_retokenization": self.need_retokenization,
+        }
 
     @property
     def citation(self) -> str:

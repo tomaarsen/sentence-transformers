@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from torch import Tensor
@@ -137,6 +138,11 @@ class BatchHardSoftMarginTripletLoss(BatchHardTripletLoss):
         triplet_loss = tl.mean()
 
         return triplet_loss
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "distance_metric": getattr(self.distance_metric, "__name__", str(self.distance_metric)),
+        }
 
     @property
     def citation(self) -> str:

@@ -194,39 +194,43 @@ class AdaptiveLayerLoss(nn.Module):
         forward_decorator = ForwardDecorator(original_forward)
         self.model.forward = forward_decorator
 
-        # Run the loss normally: i.e. the final layer, but 1) use the transformers decorator to cache
-        # the embeddings of all layers and 2) use the forward decorator to get the embeddings after all modules
-        # for the KL-divergence loss
-        loss = self.loss(sentence_features, labels) * self.last_layer_weight
-        if self.kl_temperature > 0:
-            final_embeddings = forward_decorator.get_embeddings()
-            final_embeddings = F.softmax(final_embeddings / self.kl_temperature, dim=-1)
-
-        num_layers = transformer_decorator.num_layers
-        layer_indices = range(num_layers - 1)
-        if self.n_layers_per_step > 0 and self.n_layers_per_step < num_layers - 1:
-            layer_indices = random.sample(layer_indices, self.n_layers_per_step)
-
-        # This loop is over `num_layer - 1` layers because we already computed the loss over the final layer
-        for layer_idx in layer_indices:
-            # Add regular loss for each layer by using the cached embeddings of that layer
-            transformer_decorator.set_layer_idx(layer_idx)
-            layer_loss = self.loss(sentence_features, labels)
-            loss = loss + layer_loss / (1 + layer_idx) / len(layer_indices) * self.prior_layers_weight
-
-            # and KL-divergence loss between the current layer and the final layer
-            # Note: we use "batchmean" reduction as that aligns with the mathematical definition
+        try:
+            # Run the loss normally: i.e. the final layer, but 1) use the transformers decorator to cache
+            # the embeddings of all layers and 2) use the forward decorator to get the embeddings after all modules
+            # for the KL-divergence loss
+            loss = self.loss(sentence_features, labels) * self.last_layer_weight
             if self.kl_temperature > 0:
-                embeddings = forward_decorator.get_embeddings()
-                kl_div_loss = F.kl_div(
-                    F.log_softmax(embeddings / self.kl_temperature, dim=-1),
-                    final_embeddings,
-                    reduction="batchmean",
-                )
-                loss = loss + kl_div_loss * self.kl_temperature * self.kl_div_weight
+                final_embeddings = forward_decorator.get_embeddings()
+                final_embeddings = F.softmax(final_embeddings / self.kl_temperature, dim=-1)
 
-        self.model[0].forward = original_transformer_forward
-        self.model.forward = original_forward
+            num_layers = transformer_decorator.num_layers
+            layer_indices = range(num_layers - 1)
+            if self.n_layers_per_step > 0 and self.n_layers_per_step < num_layers - 1:
+                layer_indices = random.sample(layer_indices, self.n_layers_per_step)
+
+            if not layer_indices:
+                return loss
+
+            # This loop is over `num_layer - 1` layers because we already computed the loss over the final layer
+            for layer_idx in layer_indices:
+                # Add regular loss for each layer by using the cached embeddings of that layer
+                transformer_decorator.set_layer_idx(layer_idx)
+                layer_loss = self.loss(sentence_features, labels)
+                loss = loss + layer_loss / (1 + layer_idx) / len(layer_indices) * self.prior_layers_weight
+
+                # and KL-divergence loss between the current layer and the final layer
+                # Note: we use "batchmean" reduction as that aligns with the mathematical definition
+                if self.kl_temperature > 0:
+                    embeddings = forward_decorator.get_embeddings()
+                    kl_div_loss = F.kl_div(
+                        F.log_softmax(embeddings / self.kl_temperature, dim=-1),
+                        final_embeddings,
+                        reduction="batchmean",
+                    )
+                    loss = loss + kl_div_loss * self.kl_temperature * self.kl_div_weight
+        finally:
+            self.model[0].forward = original_transformer_forward
+            self.model.forward = original_forward
 
         return loss
 

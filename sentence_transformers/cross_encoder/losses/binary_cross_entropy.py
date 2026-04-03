@@ -100,7 +100,7 @@ class BinaryCrossEntropyLoss(nn.Module):
 
         pairs = list(zip(inputs[0], inputs[1]))
         inputs = self.model.preprocess(pairs, prompt=prompt, task=task)
-        inputs.to(self.model.device)
+        inputs = inputs.to(self.model.device)
         outputs = self.model(inputs)
         logits = outputs["scores"].view(-1)
         logits = self.activation_fn(logits)

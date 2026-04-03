@@ -3,7 +3,7 @@ This example shows how to finetune a multimodal Sentence Transformer model for d
 using MatryoshkaLoss and CachedMultipleNegativesRankingLoss.
 
 Usage:
-python training_document_screenshot_embedding.py
+python training_visual_document_retrieval.py
 """
 
 import logging
@@ -30,7 +30,7 @@ model = SentenceTransformer(
     model_card_data=SentenceTransformerModelCardData(
         language="en",
         license="apache-2.0",
-        model_name="Qwen3-VL-Embedding-2B model trained on VDR query-document screenshot pairs",
+        model_name="Qwen3-VL-Embedding-2B model trained on Visual Document Retrieval query-document screenshot pairs",
     ),
     model_kwargs={"attn_implementation": "flash_attention_2", "torch_dtype": "bfloat16"},
     processor_kwargs={"min_pixels": 28 * 28, "max_pixels": 600 * 600},
@@ -48,7 +48,7 @@ loss = CachedMultipleNegativesRankingLoss(model, mini_batch_size=1)
 loss = MatryoshkaLoss(model, loss, matryoshka_dims=[2048, 1536, 1024, 512, 256, 128, 64])
 
 # 4. (Optional) Specify training arguments
-run_name = "Qwen3-VL-Embedding-2B-document-screenshots"
+run_name = "Qwen3-VL-Embedding-2B-vdr"
 args = SentenceTransformerTrainingArguments(
     # Required parameter:
     output_dir=f"models/{run_name}",

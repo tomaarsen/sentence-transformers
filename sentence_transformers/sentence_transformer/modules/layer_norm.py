@@ -25,7 +25,7 @@ class LayerNorm(Module):
     def get_embedding_dimension(self):
         return self.dimension
 
-    def save(self, output_path, safe_serialization: bool = True) -> None:
+    def save(self, output_path: str, *args, safe_serialization: bool = True, **kwargs) -> None:
         self.save_config(output_path)
         self.save_torch_weights(output_path, safe_serialization=safe_serialization)
 

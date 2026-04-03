@@ -77,8 +77,8 @@ class CrossEncoderModelCardData(BaseModelCardData):
     """
 
     # Potentially provided by the user
-    task_name: str = field(default=None)
-    tags: list[str] | None = field(
+    task_name: str | None = None
+    tags: list[str] = field(
         default_factory=lambda: [
             "sentence-transformers",
             "cross-encoder",
@@ -161,7 +161,7 @@ class CrossEncoderModelCardData(BaseModelCardData):
         if self.pipeline_tag is None:
             self.pipeline_tag = "text-ranking" if model.num_labels == 1 else "text-classification"
 
-    def run_usage_snippet(self) -> dict[str, Any]:
+    def run_usage_snippet(self) -> None:
         if self.usage_examples is None:
             self.usage_examples = [
                 [

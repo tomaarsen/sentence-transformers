@@ -18,7 +18,9 @@ class Normalize(Module):
         super().__init__()
 
     def forward(self, features: dict[str, Tensor]) -> dict[str, Tensor]:
-        features.update({"sentence_embedding": F.normalize(features["sentence_embedding"], p=2, dim=1)})
+        sentence_embedding = features.get("sentence_embedding")
+        if sentence_embedding is not None:
+            features["sentence_embedding"] = F.normalize(sentence_embedding, p=2, dim=1)
         return features
 
     def save(self, output_path: str, *args, safe_serialization: bool = True, **kwargs) -> None:

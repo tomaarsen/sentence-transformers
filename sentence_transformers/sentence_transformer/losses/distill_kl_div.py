@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -158,6 +159,12 @@ class DistillKLDivLoss(nn.Module):
         # Scale the loss to counteract the temperature scaling
         loss = loss * (self.temperature**2)
         return loss
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "similarity_fct": getattr(self.similarity_fct, "__name__", str(self.similarity_fct)),
+            "temperature": self.temperature,
+        }
 
     @property
     def citation(self) -> str:

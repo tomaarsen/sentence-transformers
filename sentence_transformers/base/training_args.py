@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -158,23 +159,34 @@ class BaseTrainingArguments(TransformersTrainingArguments):
             else self.multi_dataset_batch_sampler
         )
 
+        # In transformers <v4.54.1, the superclass doesn't yet auto-parse dict fields from CLI strings
+        if isinstance(self.prompts, str):
+            try:
+                self.prompts = json.loads(self.prompts)
+            except json.JSONDecodeError:
+                # If the string is not valid JSON, treat it as a single prompt string applied to all columns.
+                # This is unlike router_mapping/learning_rate_mapping, which must be valid JSON dicts.
+                pass
+
         self.learning_rate_mapping = self.learning_rate_mapping if self.learning_rate_mapping is not None else {}
         if isinstance(self.learning_rate_mapping, str):
-            # Note that we allow a stringified dictionary for learning_rate_mapping, but then it should have been
-            # parsed by the superclass's `__post_init__` method already
-            raise ValueError(
-                "The `learning_rate_mapping` argument must be a dictionary mapping parameter name regular expressions "
-                "to learning rates. A stringified dictionary also works."
-            )
+            try:
+                self.learning_rate_mapping = json.loads(self.learning_rate_mapping)
+            except json.JSONDecodeError:
+                raise ValueError(
+                    "The `learning_rate_mapping` argument must be a dictionary mapping parameter name regular expressions "
+                    "to learning rates. A stringified dictionary also works."
+                )
 
         self.router_mapping = self.router_mapping if self.router_mapping is not None else {}
         if isinstance(self.router_mapping, str):
-            # Note that we allow a stringified dictionary for router_mapping, but then it should have been
-            # parsed by the superclass's `__post_init__` method already
-            raise ValueError(
-                "The `router_mapping` argument must be a dictionary mapping dataset column names to Router routes, "
-                "like 'query' or 'document'. A stringified dictionary also works."
-            )
+            try:
+                self.router_mapping = json.loads(self.router_mapping)
+            except json.JSONDecodeError:
+                raise ValueError(
+                    "The `router_mapping` argument must be a dictionary mapping dataset column names to Router routes, "
+                    "like 'query' or 'document'. A stringified dictionary also works."
+                )
 
         # The `compute_loss` method in `SentenceTransformerTrainer` is overridden to only compute the prediction loss,
         # so we set `prediction_loss_only` to `True` here to avoid

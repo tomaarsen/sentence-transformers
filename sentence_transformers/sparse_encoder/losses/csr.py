@@ -211,7 +211,7 @@ class CSRLoss(nn.Module):
         Returns:
             Dictionary containing the configuration parameters
         """
-        return {"beta": self.beta, "gamma": self.gamma, "loss": self.loss}
+        return {"beta": self.beta, "gamma": self.gamma, "loss": type(self.loss).__name__}
 
     @property
     def citation(self) -> str:

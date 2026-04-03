@@ -73,6 +73,7 @@ intersphinx_mapping = {
     "optimum-onnx": ("https://huggingface.co/docs/optimum-onnx/main/en/", None),
     "peft": ("https://huggingface.co/docs/peft/main/en/", None),
     "torch": ("https://pytorch.org/docs/stable/", None),
+    "torchcodec": ("https://meta-pytorch.org/torchcodec/stable/", None),
 }
 
 

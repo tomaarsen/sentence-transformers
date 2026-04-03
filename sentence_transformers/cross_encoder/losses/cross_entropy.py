@@ -74,7 +74,7 @@ class CrossEntropyLoss(nn.Module):
 
         pairs = list(zip(inputs[0], inputs[1]))
         tokens = self.model.preprocess(pairs, prompt=prompt, task=task)
-        tokens.to(self.model.device)
+        tokens = tokens.to(self.model.device)
         logits = self.model(tokens)["scores"]
         logits = self.activation_fn(logits)
         loss = self.ce_loss(logits, labels)

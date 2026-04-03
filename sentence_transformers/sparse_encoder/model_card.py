@@ -41,7 +41,7 @@ class SparseEncoderModelCardData(BaseModelCardData):
             e.g. "semantic search and sparse retrieval".
         tags (`Optional[List[str]]`): A list of tags for the model,
             e.g. ["sentence-transformers", "sparse-encoder"].
-        local_files_only (`bool`): If True, don't attempt to find dataset or base model information on the Hub.Add commentMore actions
+        local_files_only (`bool`): If True, don't attempt to find dataset or base model information on the Hub.
             Defaults to False.
         generate_widget_examples (`bool`): If True, generate widget examples from the evaluation or training dataset,
             and compute their similarities. Defaults to True.
@@ -69,8 +69,8 @@ class SparseEncoderModelCardData(BaseModelCardData):
     _snippet_default_model_id = "sparse_encoder_model_id"
 
     # Potentially provided by the user
-    task_name: str = field(default=None)
-    tags: list[str] | None = field(
+    task_name: str | None = None
+    tags: list[str] = field(
         default_factory=lambda: [
             "sentence-transformers",
             "sparse-encoder",
@@ -134,7 +134,7 @@ class SparseEncoderModelCardData(BaseModelCardData):
         )
         return metadata
 
-    def run_usage_snippet(self) -> dict[str, Any]:
+    def run_usage_snippet(self) -> None:
         super().run_usage_snippet()
 
         if not self.generate_widget_examples:

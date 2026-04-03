@@ -56,12 +56,12 @@ except ImportError:
 
 try:
     from torchcodec.decoders import AudioDecoder
-except ImportError:
+except (ImportError, OSError):
     AudioDecoder = None  # type: ignore[assignment,misc]
 
 try:
     from torchcodec.decoders import VideoDecoder
-except ImportError:
+except (ImportError, OSError):
     VideoDecoder = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
@@ -319,15 +319,12 @@ class BaseModelCardData(CardData):
     model_id: str | None = None
     train_datasets: list[dict[str, str]] = field(default_factory=list)
     eval_datasets: list[dict[str, str]] = field(default_factory=list)
-    task_name: str = (
-        "semantic textual similarity, semantic search, paraphrase mining, text classification, clustering, and more"
-    )
-    tags: list[str] | None = field(
+    task_name: str | None = "retrieval"
+    tags: list[str] = field(
         default_factory=lambda: [
             "sentence-transformers",
             "sentence-similarity",
             "feature-extraction",
-            "dense",
         ]
     )
     local_files_only: bool = False
@@ -791,11 +788,16 @@ class BaseModelCardData(CardData):
         # AudioDict: {"array": ..., "sampling_rate": ...}
         if isinstance(value, dict) and "array" in value and "sampling_rate" in value:
             try:
-                import soundfile as sf
+                import torchaudio
 
+                array = value["array"]
+                if not isinstance(array, torch.Tensor):
+                    array = torch.as_tensor(array)
+                if array.ndim == 1:
+                    array = array.unsqueeze(0)  # (1, num_samples) for torchaudio
                 filename = f"{prefix}audio_{idx}.wav"
                 rel_path = f"assets/{filename}"
-                sf.write(os.path.join(assets_dir, filename), value["array"], value["sampling_rate"])
+                torchaudio.save(os.path.join(assets_dir, filename), array.float().cpu(), value["sampling_rate"])
                 if content_hash is not None:
                     self._asset_cache[content_hash] = rel_path
                 return rel_path
@@ -805,17 +807,17 @@ class BaseModelCardData(CardData):
         # VideoDict: {"array": ..., "video_metadata": ...} - save as mp4
         if isinstance(value, dict) and "array" in value and "video_metadata" in value:
             try:
-                from torchcodec.encoders import VideoEncoder
+                import av
 
                 array = value["array"]
                 if not isinstance(array, torch.Tensor):
                     array = torch.as_tensor(array)
-                # VideoEncoder expects (N, C, H, W) uint8
                 if array.ndim == 5:
                     array = array[0]
-                if array.ndim == 4 and array.shape[-1] in (1, 3, 4):
-                    # (T, H, W, C) -> (T, C, H, W)
-                    array = array.permute(0, 3, 1, 2)
+                # Ensure (T, H, W, C) uint8 for av
+                if array.ndim == 4 and array.shape[1] in (1, 3, 4) and array.shape[-1] not in (1, 3, 4):
+                    # (T, C, H, W) -> (T, H, W, C)
+                    array = array.permute(0, 2, 3, 1)
                 if array.dtype != torch.uint8:
                     if array.is_floating_point() and array.max() <= 1.0:
                         array = (array * 255).clamp(0, 255).to(torch.uint8)
@@ -825,7 +827,20 @@ class BaseModelCardData(CardData):
                 fps = value.get("video_metadata", {}).get("fps", 24)
                 filename = f"{prefix}video_{idx}.mp4"
                 rel_path = f"assets/{filename}"
-                VideoEncoder(array.cpu(), frame_rate=fps).to_file(os.path.join(assets_dir, filename))
+                filepath = os.path.join(assets_dir, filename)
+                frames = array.cpu().numpy()
+                height, width = frames.shape[1], frames.shape[2]
+                with av.open(filepath, mode="w") as container:
+                    stream = container.add_stream("h264", rate=round(fps))
+                    stream.width = width
+                    stream.height = height
+                    stream.pix_fmt = "yuv420p"
+                    for frame_data in frames:
+                        frame = av.VideoFrame.from_ndarray(frame_data, format="rgb24")
+                        for packet in stream.encode(frame):
+                            container.mux(packet)
+                    for packet in stream.encode():
+                        container.mux(packet)
                 if content_hash is not None:
                     self._asset_cache[content_hash] = rel_path
                 return rel_path
@@ -1481,7 +1496,7 @@ class BaseModelCardData(CardData):
             return {k: BaseModelCardData._prepare_for_inference(v) for k, v in value.items()}
         return value
 
-    def run_usage_snippet(self) -> dict[str, Any]:
+    def run_usage_snippet(self) -> None:
         if self.usage_examples is None:
             self.usage_examples = [
                 "The weather is lovely today.",
@@ -1501,7 +1516,7 @@ class BaseModelCardData(CardData):
         # Use display version (with file paths) if available, otherwise original usage_examples
         display = self.usage_examples_display or self.usage_examples
         if not display:
-            return self._generate_text_snippet(display)
+            return self._generate_text_snippet(None)
 
         # Check the *original* usage_examples for modality detection, since display converts
         # non-text items (PIL images, audio dicts, etc.) to file path strings.
@@ -1607,6 +1622,8 @@ class BaseModelCardData(CardData):
             subsequent calls to avoid filename collisions across datasets.
         """
         dataset_columns = dataset_info["_example_columns"]
+        if not dataset_info["examples"]:
+            return "", asset_counter
         num_samples = len(dataset_info["examples"][list(dataset_info["examples"])[0]])
         examples_lines = []
         for sample_idx in range(num_samples):
@@ -1740,6 +1757,8 @@ class BaseModelCardData(CardData):
         return results
 
     def get_model_specific_metadata(self) -> dict[str, Any]:
+        if self.model is None:
+            return {}
         supported_modalities = [format_modality(m).title() for m in self.model.modalities]
         return {
             "model_max_length": self.model.get_max_seq_length(),

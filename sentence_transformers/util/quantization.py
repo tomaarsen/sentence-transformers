@@ -427,6 +427,7 @@ def quantize_embeddings(
                 ranges = np.vstack((np.min(embeddings, axis=0), np.max(embeddings, axis=0)))
         starts = ranges[0, :]
         steps = (ranges[1, :] - ranges[0, :]) / 255
+        steps = np.where(steps == 0, 1, steps)
 
         if precision == "uint8":
             return ((embeddings - starts) / steps).astype(np.uint8)

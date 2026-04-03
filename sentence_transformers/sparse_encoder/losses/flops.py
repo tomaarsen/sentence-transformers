@@ -44,13 +44,16 @@ class FlopsLoss(nn.Module):
             "FlopsLoss is not intended to be used directly. Use it as a regulizer within the SpladeLoss class."
         )
 
-    def compute_loss_from_embeddings(self, embeddings: list[torch.Tensor]) -> torch.Tensor:
+    def compute_loss_from_embeddings(self, embeddings: torch.Tensor) -> torch.Tensor:
         if self.threshold is not None:
             l0_norm = (embeddings != 0).sum(dim=1)
             mask = (l0_norm > self.threshold).float()
             embeddings = embeddings * mask.unsqueeze(1)
 
         return torch.sum(torch.mean(embeddings, dim=0) ** 2)
+
+    def get_config_dict(self) -> dict:
+        return {"threshold": self.threshold}
 
     @property
     def citation(self) -> str:

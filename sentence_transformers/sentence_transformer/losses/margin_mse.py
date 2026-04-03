@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -211,6 +212,11 @@ class MarginMSELoss(nn.Module):
             margins = [scores_pos - neg_score for neg_score in scores_negs]
             margins = torch.stack(margins, dim=1)  # Shape: (batch_size, num_negatives)
             return self.loss_fct(margins, labels)
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "similarity_fct": getattr(self.similarity_fct, "__name__", str(self.similarity_fct)),
+        }
 
     @property
     def citation(self) -> str:

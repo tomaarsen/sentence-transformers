@@ -20,14 +20,16 @@ from tests.utils import is_ci
 
 try:
     from torchcodec.decoders import AudioDecoder, VideoDecoder
-except ImportError:
+except (ImportError, OSError):
     AudioDecoder = None
     VideoDecoder = None
 
 try:
-    import soundfile as sf
-except ImportError:
-    sf = None
+    import torchaudio
+
+    _has_torchaudio = True
+except (ImportError, OSError):
+    _has_torchaudio = False
 
 if is_ci():
     pytest.skip(
@@ -147,6 +149,7 @@ EXPECT_FORWARD_FAIL = {
     "paligemma": [  # Paligemma doesn't accept URL images if there's also a text
         "image+text (url, text)"
     ],
+    "voxtral_realtime": None,  # RuntimeError: The size of tensor a (39) must match the size of tensor b (51) at non-singleton dimension 1
 }
 # If an architecture outputs sentence_embeddings directly, then they're likely using get_..._features,
 # which typically don't support multimodal inputs, so we can expect multimodal inputs to fail for those architectures
@@ -281,15 +284,16 @@ def get_sample_audio(n: int = 2) -> dict[str, list[Any]]:
 
     # Generate local file paths
     paths = []
-    if sf is not None:
+    if _has_torchaudio:
         for i, arr in enumerate(arrays):
             temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-            sf.write(temp_file.name, arr, sampling_rate)
             temp_file.close()
+            tensor = torch.from_numpy(arr).unsqueeze(0).float()  # (1, num_samples) for torchaudio
+            torchaudio.save(temp_file.name, tensor, sampling_rate)
             paths.append(temp_file.name)
             _temp_media_files.append(temp_file.name)
     else:
-        # Fallback if soundfile not available
+        # Fallback if torchaudio not available
         paths = urls[:n]
 
     result = {
@@ -300,7 +304,7 @@ def get_sample_audio(n: int = 2) -> dict[str, list[Any]]:
         # "path": paths,  # Rarely supported currently
     }
 
-    if AudioDecoder is not None and sf is not None:
+    if AudioDecoder is not None and _has_torchaudio:
         result["audio_decoder"] = [AudioDecoder(path) for path in paths]
 
     return result

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch.nn.functional as F
 from torch import Tensor, nn
@@ -86,3 +87,11 @@ class OnlineContrastiveLoss(nn.Module):
         negative_loss = F.relu(self.margin - negative_pairs).pow(2).sum()
         loss = positive_loss + negative_loss
         return loss
+
+    def get_config_dict(self) -> dict[str, Any]:
+        distance_metric_name = getattr(self.distance_metric, "__name__", str(self.distance_metric))
+        for name, value in vars(SiameseDistanceMetric).items():
+            if value == self.distance_metric:
+                distance_metric_name = f"SiameseDistanceMetric.{name}"
+                break
+        return {"distance_metric": distance_metric_name, "margin": self.margin}

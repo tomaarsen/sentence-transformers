@@ -48,7 +48,7 @@ class LSTM(Module):
             batch_first=True,
         )
 
-    def forward(self, features):
+    def forward(self, features: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         token_embeddings = features["token_embeddings"]
         sentence_lengths = torch.clamp(features["sentence_lengths"], min=1)
 

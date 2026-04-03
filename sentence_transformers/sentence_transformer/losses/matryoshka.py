@@ -229,7 +229,7 @@ class MatryoshkaLoss(nn.Module):
         )
         if isinstance(loss, self.cached_losses):
             loss.calculate_loss = CachedLossDecorator(
-                loss.calculate_loss, self.matryoshka_dims, self.matryoshka_weights
+                loss.calculate_loss, self.matryoshka_dims, self.matryoshka_weights, self.n_dims_per_step
             )
 
     def forward(self, sentence_features: Iterable[dict[str, Tensor]], labels: Tensor) -> Tensor:

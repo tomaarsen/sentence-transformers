@@ -232,6 +232,11 @@ Additionally, if your dataset has extraneous columns (e.g. sample_id, metadata, 
 ### Multimodal Datasets
 
 ```{eval-rst}
+
+.. tip::
+
+   Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <../installation.html>`_ for all options.
+
 CrossEncoder datasets are not limited to text columns. When using a multimodal backbone (e.g. a vision-language model), input columns can also contain images (as PIL images, file paths, or URLs), audio, video, or multimodal dictionaries combining multiple modalities. The dataset format rules from `Dataset Format <#dataset-format>`_ still apply: non-label columns are treated as inputs, and a ``"label"`` column provides the target score or class.
 
 For example, a dataset for image-to-text reranking might have an ``"image"`` column with PIL images, a ``"text"`` column with candidate captions, and a ``"label"`` column with binary relevance scores::

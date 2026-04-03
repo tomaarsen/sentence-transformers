@@ -81,7 +81,7 @@ class TaskTypesTrackingModuleDict(nn.ModuleDict):
 @pytest.mark.parametrize("routes", [{}, None])
 def test_router_empty_routes_raises_value_error(routes):
     """Test that Router raises ValueError when initialized with empty routes dictionary or None."""
-    with pytest.raises(ValueError, match="The routes dictionary cannot be empty."):
+    with pytest.raises(ValueError, match="cannot be empty"):
         Router(routes)
 
 
@@ -261,26 +261,26 @@ def test_router_is_alias_for_asym():
 
 
 def test_router_backwards_compatibility(static_embedding_model):
-    """Test that passing task types as dictionary keys raises a helpful error."""
+    """Test that passing task types as dictionary keys still works via backwards compatibility."""
 
     asym_model = Asym({"query": [static_embedding_model], "document": [static_embedding_model]})
     model = SentenceTransformer(modules=[asym_model])
 
-    with pytest.raises(
-        ValueError,
-        match=r"Passing task types as dictionary keys \(e\.g\. \{'query': ...\}\) is no longer supported\. Instead, pass the inputs directly and use the `task` parameter",
-    ):
-        model.encode([{"query": "What is the capital of France?"}, {"query": "The capital of France is Paris."}])
+    # Single task type dicts are silently unwrapped by Router.preprocess
+    query_embeddings = model.encode(
+        [{"query": "What is the capital of France?"}, {"query": "The capital of France is Paris."}]
+    )
+    assert query_embeddings.shape == (2, model.get_embedding_dimension())
 
-    with pytest.raises(
-        ValueError,
-        match=r"Passing task types as dictionary keys \(e\.g\. \{'document': ...\}\) is no longer supported\. Instead, pass the inputs directly and use the `task` parameter",
-    ):
-        model.encode([{"document": "What is the capital of France?"}, {"document": "The capital of France is Paris."}])
+    doc_embeddings = model.encode(
+        [{"document": "What is the capital of France?"}, {"document": "The capital of France is Paris."}]
+    )
+    assert doc_embeddings.shape == (2, model.get_embedding_dimension())
 
+    # Mixed task type dicts in a single batch still raise an error
     with pytest.raises(
         ValueError,
-        match=r"Passing task types as dictionary keys \(e\.g\. \{'(query|document)': ...\}\) is no longer supported\. Instead, pass the inputs directly and use the `task` parameter",
+        match=r"You cannot pass a list of dictionaries with different task types",
     ):
         model.encode(
             [
@@ -1349,3 +1349,53 @@ def test_router_modalities():
     # All routes with the same modality, no duplicates
     router = Router({"query": [text_module], "document": [text_module]})
     assert sorted(router.modalities, key=str) == ["text"]
+
+
+def test_router_forward_kwargs_overwrite_features():
+    """Test that task/modality passed as kwargs to forward take precedence over values in features dict."""
+    query_module = InvertMockModule()
+    doc_module = MockModule()
+
+    router = Router({"query": [query_module], "document": [doc_module]})
+
+    embedding = torch.tensor([[1.0, 2.0, 3.0]])
+    features = {
+        "sentence_embedding": embedding.clone(),
+        "task": "document",
+        "modality": "text",
+    }
+
+    # When task kwarg is passed, it should override features["task"]
+    result = router.forward(features, task="query")
+    # InvertMockModule negates the embedding, so if "query" route was used, embedding is negated
+    assert torch.equal(result["sentence_embedding"], -embedding)
+
+    # When neither kwarg is passed, features["task"] should be used (document route, no inversion)
+    features2 = {
+        "sentence_embedding": embedding.clone(),
+        "task": "document",
+    }
+    result2 = router.forward(features2)
+    assert torch.equal(result2["sentence_embedding"], embedding)
+
+
+def test_router_forward_unsorted_tuple_modality_from_features():
+    """Test that a tuple modality in features is normalized (sorted) before route resolution."""
+    module_a = MockModule()
+    module_b = InvertMockModule()
+
+    # route_mappings key uses sorted tuple ("image", "text")
+    router = Router(
+        {"text_route": [module_a], "multimodal_route": [module_b]},
+        route_mappings={(None, ("image", "text")): "multimodal_route"},
+    )
+
+    embedding = torch.tensor([[1.0, 2.0, 3.0]])
+    # Pass unsorted tuple ("text", "image") in features - should still resolve to ("image", "text")
+    features = {
+        "sentence_embedding": embedding.clone(),
+        "modality": ("text", "image"),
+    }
+    result = router.forward(features)
+    # InvertMockModule negates the embedding, confirming multimodal_route was used
+    assert torch.equal(result["sentence_embedding"], -embedding)

@@ -65,8 +65,9 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
     model_card_data_class = BaseModelCardData
     # The default Hugging Face organization to prepend to short model names.
     default_huggingface_organization: str | None = None
-    # Default prompts to initialize for new model instances (e.g. {"query": "", "document": ""}).
-    _default_prompts: dict[str, str] = {}
+    # Default prompts to initialize for new model instances. Use None as the value for prompts
+    # that should be filled by the saved model config; empty string "" means intentionally blank.
+    _default_prompts: dict[str, str | None] = {}
     # The placeholder model ID in model card templates that gets replaced with the actual model ID.
     _model_card_model_id_placeholder: str = "sentence_transformers_model_id"
 
@@ -102,7 +103,9 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
                 for computation. If None, checks if a GPU can be used. Defaults to None.
             prompts (dict[str, str], optional): A dictionary with prompts for the model. The key is the prompt
                 name, the value is the prompt text. The prompt text will be prepended before any text during inference.
-                For example: ``{"query": "query: ", "passage": "passage: "}``. Defaults to None.
+                For example: ``{"query": "query: ", "passage": "passage: "}``. If a model has saved prompts, you
+                can override them by passing your own, or pass ``{"query": "", "document": ""}`` to disable them.
+                Defaults to None.
             default_prompt_name (str, optional): The name of the prompt that should be used by default. If not
                 set, no prompt will be applied. Defaults to None.
             cache_folder (str, optional): Path to store models. Can also be set by the
@@ -179,19 +182,19 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
             adapt_transformers_to_gaudi()
 
         # Load model
-        if model_name_or_path is not None and model_name_or_path != "":
-            if not os.path.exists(model_name_or_path):
-                # Not a path, load from hub
-                if "\\" in model_name_or_path or model_name_or_path.count("/") > 1:
-                    raise FileNotFoundError(f"Path {model_name_or_path} not found")
+        if model_name_or_path and not os.path.exists(model_name_or_path):
+            # Not a local path, load from hub
+            if (os.sep == "\\" and "\\" in model_name_or_path) or model_name_or_path.count("/") > 1:
+                raise FileNotFoundError(f"Path {model_name_or_path} not found")
 
-                if (
-                    self.default_huggingface_organization is not None
-                    and "/" not in model_name_or_path
-                    and model_name_or_path.lower() not in ORIGINAL_TRANSFORMER_MODELS
-                ):
-                    model_name_or_path = f"{self.default_huggingface_organization}/{model_name_or_path}"
+            if (
+                self.default_huggingface_organization is not None
+                and "/" not in model_name_or_path
+                and model_name_or_path.lower() not in ORIGINAL_TRANSFORMER_MODELS
+            ):
+                model_name_or_path = f"{self.default_huggingface_organization}/{model_name_or_path}"
 
+        if model_name_or_path:
             modules, self.module_kwargs = self._load_modules(
                 model_name_or_path,
                 token=token,
@@ -207,26 +210,38 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         if modules is not None and not isinstance(modules, OrderedDict):
             modules = OrderedDict([(str(idx), module) for idx, module in enumerate(modules)])
 
+        if modules is not None and len(modules) == 0:
+            raise ValueError(
+                f"An empty modules list was passed to {type(self).__name__}. "
+                "Please provide at least one module, e.g. a Transformer module."
+            )
+
         super().__init__(modules)
 
-        # Ensure all tensors in the model are of the same dtype as the first tensor
-        try:
-            first_parameter_dtype = next(self.parameters()).dtype
-            self.to(first_parameter_dtype)
-        except StopIteration:
-            pass
+        # Cast non-input modules to match the first module's dtype for consistency.
+        # The first module (e.g. Transformer) is the dtype source of truth and downstream
+        # modules (Dense, Pooling, etc.) should match it.
+        first_param = next(self[0].parameters(), None)
+        if first_param is not None:
+            first_dtype = first_param.dtype
+            for module in list(self.children())[1:]:
+                module.to(first_dtype)
 
         self.to(device)
         self.is_hpu_graph_enabled = False
 
-        # Pass the model to the model card data for later use
-        self.model_card_data.register_model(self)
-
         # Validate prompts after model loading (which may have merged config prompts)
         self._validate_prompts()
 
+        # Pass the model to the model card data for later use
+        self.model_card_data.register_model(self)
+
     def _validate_prompts(self) -> None:
         """Validate prompt configuration and log prompt information."""
+        # Replace any remaining None prompts (not filled by saved config) with empty strings
+        for key, value in self.prompts.items():
+            if value is None:
+                self.prompts[key] = ""
         if self.default_prompt_name is not None and self.default_prompt_name not in self.prompts:
             raise ValueError(
                 f"Default prompt name '{self.default_prompt_name}' not found in the configured prompts "
@@ -288,7 +303,8 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
 
         A modality is supported if:
 
-        1. It is directly listed in :attr:`modalities`, or
+        1. It is directly listed in :attr:`modalities` (including tuple modalities that
+           are explicitly listed), or
         2. It is a tuple of modalities (e.g. ``("image", "text")``) where each part is
            individually supported and the model also supports ``"message"`` format, which
            is used to combine multiple modalities into a single input.
@@ -348,13 +364,15 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
 
     def get_max_seq_length(self) -> int | None:
         """
-        Returns the maximal sequence length that the model accepts. Longer inputs will be truncated.
+        Returns the maximal sequence length that the first module of the model accepts.
+        Longer inputs will be truncated.
 
         Returns:
             Optional[int]: The maximal sequence length that the model accepts, or None if it is not defined.
         """
-        if hasattr(self._first_module(), "max_seq_length"):
-            return self._first_module().max_seq_length
+        first = self[0]
+        if first is not None and hasattr(first, "max_seq_length"):
+            return first.max_seq_length
 
         return None
 
@@ -367,16 +385,21 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         return self._modules[next(reversed(self._modules))]
 
     def _can_flatten_inputs(self) -> bool:
-        """Check if the first module (Transformer or Router containing Transformers) supports flattened text-only inputs."""
-        first = self[0]
-        if isinstance(first, Transformer):
-            return first.can_flatten_inputs
-        if isinstance(first, Router):
-            for route in first.sub_modules.values():
+        """Check if the first module (Transformer or Router containing Transformers) supports flattened text-only inputs.
+
+        For Router models, this returns True only if ALL routes support flattening, since we cannot
+        know at this point which route will be used.
+        """
+        input_module = self[0]
+        if isinstance(input_module, Transformer):
+            return input_module.can_flatten_inputs
+        if isinstance(input_module, Router):
+            for route in input_module.sub_modules.values():
                 # Each route is nn.Sequential; the first child is the Transformer
-                first_in_route = next(iter(route.children()))
-                if isinstance(first_in_route, Transformer) and first_in_route.can_flatten_inputs:
-                    return True
+                first_in_route = next(iter(route.children()), None)
+                if not isinstance(first_in_route, Transformer) or not first_in_route.can_flatten_inputs:
+                    return False
+            return bool(input_module.sub_modules)
         return False
 
     @staticmethod
@@ -471,14 +494,18 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         **kwargs,
     ) -> dict[str, Tensor | Any]:
         """
-        Preprocesses the texts.
+        Preprocesses the inputs for the model.
 
         Args:
-            inputs (list[str | list[str] | tuple[str, str] | dict[str, Any] | PIL.Image | np.ndarray | torch.Tensor]): A list of inputs to be preprocessed.
+            inputs (list[SingleInput | PairInput]): A list of inputs to be preprocessed. Each input can be a
+                string, dict, tuple, PIL Image, numpy array, torch Tensor, or other supported modality.
                 If a single input is provided, it must be wrapped in a list.
+            prompt (str, optional): A prompt string to prepend to text inputs. Defaults to None.
+                If the model supports the ``message`` modality, the prompt will be added as a system message to the
+                input messages instead of being prepended to text.
 
         Returns:
-            Dict[str, Tensor]: A dictionary of tensors with the preprocessed texts.
+            dict[str, Tensor | Any]: A dictionary of tensors with the preprocessed inputs.
         """
         if not inputs:
             return {}
@@ -487,42 +514,23 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         # If "message" is supported, any modality is allowed since the input module
         # can convert it to message format (e.g. wrapping images in chat messages).
         modality = None
-        if inputs:
-            try:
-                modality = infer_batch_modality(inputs, supported_modalities=self.modalities)
-            except (ValueError, TypeError):
-                pass
+        try:
+            modality = infer_batch_modality(inputs, supported_modalities=self.modalities)
+        except (ValueError, TypeError):
+            pass
 
-            if modality is not None and not self.supports(modality):
-                # Check if this looks like the old Asym/Router dict-style input,
-                # e.g. [{"query": "text"}, {"query": "text"}], where the dict keys
-                # are task names rather than modalities.
-                if isinstance(self[0], Router):
-                    route_names = set(self[0].sub_modules.keys())
-                    if isinstance(modality, tuple):
-                        task_name = next((key for key in modality if key in route_names), None)
-                    elif modality == "message" and all(isinstance(inp, dict) for inp in inputs):
-                        dict_keys = {key for inp in inputs for key in inp.keys()}  # type: ignore[union-attr]
-                        task_name = next((key for key in dict_keys if key in route_names), None)
-                    else:
-                        task_name = None
-                    if task_name is not None:
-                        raise ValueError(
-                            f"Passing task types as dictionary keys (e.g. {{'{task_name}': ...}}) is no longer supported. "
-                            f'Instead, pass the inputs directly and use the `task` parameter, e.g. task="{task_name}".'
-                        )
-
-                supported = ", ".join(format_modality(m) for m in self.modalities)
-                message = (
-                    f"Modality '{format_modality(modality)}' is not supported by this {type(self).__name__} model. "
-                    f"Supported modalities: {supported}"
+        if modality is not None and not self.supports(modality):
+            supported = ", ".join(format_modality(m) for m in self.modalities)
+            message = (
+                f"Modality '{format_modality(modality)}' is not supported by this {type(self).__name__} model. "
+                f"Supported modalities: {supported}"
+            )
+            if isinstance(modality, tuple) and all(part in self.modalities for part in modality):
+                message += (
+                    f"\nThis model supports {' and '.join(modality)} individually, "
+                    "but not in the same input. Please process each modality separately."
                 )
-                if isinstance(modality, tuple) and all(part in self.modalities for part in modality):
-                    message += (
-                        f"\nThis model supports {' and '.join(modality)} individually, "
-                        "but not in the same input. Please process each modality separately."
-                    )
-                raise ValueError(message)
+            raise ValueError(message)
 
         # Backwards compatibility: fall back to preprocess/tokenize without prompt if the
         # input module doesn't accept it. Only the main path (preprocess with prompt) will
@@ -531,11 +539,11 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
             preprocessed = self[0].preprocess(inputs, prompt=prompt, **kwargs)
         except TypeError:
             if prompt and modality == "text":
-                inputs = [prompt + inp for inp in inputs]  # type: ignore[operator]
+                inputs = [(prompt + inp[0],) + inp[1:] if isinstance(inp, tuple) else prompt + inp for inp in inputs]
             preprocessed = self[0].preprocess(inputs, **kwargs)
         except AttributeError:
             if prompt and modality == "text":
-                inputs = [prompt + inp for inp in inputs]  # type: ignore[operator]
+                inputs = [(prompt + inp[0],) + inp[1:] if isinstance(inp, tuple) else prompt + inp for inp in inputs]
             try:
                 preprocessed = self[0].tokenize(inputs, **kwargs)
             except TypeError:
@@ -563,9 +571,12 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         """
         list_types = (list, tuple)
         if is_datasets_available():
-            from datasets import Column
+            try:
+                from datasets import Column
 
-            list_types += (Column,)
+                list_types += (Column,)
+            except ImportError:
+                pass
         return not isinstance(inputs, list_types)
 
     def save(
@@ -705,7 +716,7 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         Args:
             path (str): The path where the model card will be stored.
             model_name (Optional[str], optional): The name of the model. Defaults to None.
-            train_datasets (Optional[List[str]], optional): Deprecated argument. Defaults to "deprecated".
+            train_datasets (Optional[List[str]], optional): Deprecated argument, ignored.
 
         Returns:
             None
@@ -817,7 +828,7 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         create_pr: bool = False,
     ) -> str:
         """
-        Uploads all elements of this model to a new HuggingFace Hub repository.
+        Uploads all elements of this model to a HuggingFace Hub repository, creating it if it doesn't exist.
 
         Args:
             repo_id (str): Repository name for your model in the Hub, including the user or organization.
@@ -827,7 +838,9 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
             commit_message (str, optional): Message to commit while pushing.
             local_model_path (str, optional): Path of the model locally. If set, this file path will be uploaded. Otherwise, the current model will be uploaded
             exist_ok (bool, optional): If true, saving to an existing repository is OK. If false, saving only to a new repository is possible
-            replace_model_card (bool, optional): If true, replace an existing model card in the hub with the automatically created model card
+            replace_model_card (bool, optional): If true, replace an existing model card in the hub with the
+                automatically created model card. If false (default), keep the existing model card if one exists
+                in the repository.
             train_datasets (List[str], optional): Datasets used to train the model. If set, the datasets will be added to the model card in the Hub.
             revision (str, optional): Branch to push the uploaded files to
             create_pr (bool, optional): If True, create a pull request instead of pushing directly to the main branch
@@ -879,9 +892,14 @@ This pull request has been automatically generated to add {self.__class__.__name
             )
         else:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                create_model_card_for_path = not replace_model_card or not os.path.exists(
-                    os.path.join(tmp_dir, "README.md")
-                )
+                if replace_model_card:
+                    create_model_card_for_path = True
+                else:
+                    # If replace_model_card=False, skip model card creation only if there's already a README.md
+                    existing_readme = load_file_path(
+                        repo_id, "README.md", token=token, revision=revision, local_files_only=False
+                    )
+                    create_model_card_for_path = existing_readme is None
                 self.save(
                     tmp_dir,
                     model_name=repo_id,
@@ -979,7 +997,6 @@ This pull request has been automatically generated to add {self.__class__.__name
             model_kwargs (Optional[Dict[str, Any]], optional): Additional keyword arguments for the model. Defaults to None.
             processor_kwargs (Optional[Dict[str, Any]], optional): Additional keyword arguments for the processor/tokenizer. Defaults to None.
             config_kwargs (Optional[Dict[str, Any]], optional): Additional keyword arguments for the config. Defaults to None.
-            has_modules (bool, optional): Whether the model has modules.json. Defaults to False.
 
         Returns:
             List[nn.Module]: A list containing the transformer model and the pooling model.
@@ -1086,7 +1103,7 @@ This pull request has been automatically generated to add {self.__class__.__name
                 # Old custom modules (e.g. jinaai/jina-embeddings-v3) use model_args/config_args;
                 # new-style modules use model_kwargs/config_kwargs.
                 init_params = set(signature.parameters)
-                uses_old_names = {"model_args", "config_args"} <= init_params
+                uses_old_names = {"model_args", "config_args", "tokenizer_args"} & init_params
                 uses_new_names = {"model_kwargs", "config_kwargs"} <= init_params
                 if uses_new_names or uses_old_names:
                     init_kwargs = Transformer._load_init_kwargs(
@@ -1164,18 +1181,25 @@ This pull request has been automatically generated to add {self.__class__.__name
             path_parts = Path(modules_json_path)
             if len(path_parts.parts) >= 2:
                 revision_path_part = Path(modules_json_path).parts[-2]
-                if len(revision_path_part) == 40:
+                if len(revision_path_part) == 40 and all(c in "0123456789abcdef" for c in revision_path_part):
                     revision = revision_path_part
         if not local_files_only:
             self.model_card_data.set_base_model(model_name_or_path, revision=revision)
         return modules, module_kwargs
 
     def _parse_model_config(self, model_config: dict[str, Any]) -> None:
+        """Parse model configuration and merge saved prompts/defaults with user-provided values.
+
+        User-provided prompts and default_prompt_name take precedence over saved config values.
+        Saved prompts are only used for keys not already present in ``self.prompts``, or where the
+        current value is ``None`` (i.e. a default placeholder, not yet filled by the user or config).
+        Empty string ``""`` is treated as an intentional user-provided value and will not be overwritten.
+        """
         # Only update prompts that aren't already set by the user or defaults
         for prompt_name, prompt_text in model_config.get("prompts", {}).items():
-            if prompt_name not in self.prompts or not self.prompts[prompt_name]:
+            if prompt_name not in self.prompts or self.prompts[prompt_name] is None:
                 self.prompts[prompt_name] = prompt_text
-        if not self.default_prompt_name:
+        if self.default_prompt_name is None:
             self.default_prompt_name = model_config.get("default_prompt_name", None)
 
     def _load_converted_modules(
@@ -1305,12 +1329,15 @@ This pull request has been automatically generated to add {self.__class__.__name
             os.makedirs(output_path, exist_ok=True)
         return evaluator(self, output_path)
 
-    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None) -> None:
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs: dict[str, Any] | None = None) -> None:
         """Enable gradient checkpointing for the model."""
         # Propagate the gradient checkpointing to the transformer model
         for module in self.modules():
             if module is not self and hasattr(module, "gradient_checkpointing_enable"):
-                module.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+                try:
+                    module.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+                except TypeError:
+                    module.gradient_checkpointing_enable()
 
     @property
     def device(self) -> torch.device:
@@ -1327,7 +1354,7 @@ This pull request has been automatically generated to add {self.__class__.__name
         try:
             return next(self.parameters()).device
         except StopIteration:
-            # For nn.DataParallel compatibility in PyTorch 1.5
+            # Fallback for nn.DataParallel compatibility when parameters() is empty
 
             def find_tensor_attributes(module: nn.Module) -> list[tuple[str, Tensor]]:
                 tuples = [(k, v) for k, v in module.__dict__.items() if torch.is_tensor(v)]
@@ -1370,6 +1397,8 @@ This pull request has been automatically generated to add {self.__class__.__name
 
         logger.info(f"Starting multi-process pool on devices: {', '.join(map(str, target_devices))}")
 
+        # Move model to CPU and share memory so child processes can access it.
+        # Note: this modifies the model in-place, the model will remain on CPU after this call.
         self.to("cpu")
         self.share_memory()
         ctx = mp.get_context("spawn")
@@ -1419,6 +1448,13 @@ This pull request has been automatically generated to add {self.__class__.__name
         input_queue: Queue,
         results_queue: Queue,
     ) -> None:
+        """Worker function for multi-process inference. Must be overridden by subclasses.
+
+        This is called as the target function in each spawned process by
+        :meth:`start_multi_process_pool`. Subclasses should implement this to
+        read from ``input_queue``, run inference on ``target_device``, and write
+        results to ``results_queue``.
+        """
         raise NotImplementedError("This method should be implemented in subclasses.")
 
     @property
@@ -1433,7 +1469,12 @@ This pull request has been automatically generated to add {self.__class__.__name
         """
         Property to set the tokenizer that should be used by this model
         """
-        self[0].tokenizer = value
+        try:
+            self[0].tokenizer = value
+        except AttributeError:
+            raise AttributeError(
+                f"The first module ({type(self[0]).__name__}) does not have a 'tokenizer' attribute."
+            ) from None
 
     @property
     def processor(self) -> Any:
@@ -1443,21 +1484,21 @@ This pull request has been automatically generated to add {self.__class__.__name
         return self[0].processor
 
     @property
-    def max_seq_length(self) -> int:
+    def max_seq_length(self) -> int | None:
         """
         Returns the maximal input sequence length for the model. Longer inputs will be truncated.
 
         Returns:
-            int: The maximal input sequence length.
+            Optional[int]: The maximal input sequence length, or None if not defined.
         """
-        return self._first_module().max_seq_length
+        return getattr(self[0], "max_seq_length", None)
 
     @max_seq_length.setter
     def max_seq_length(self, value) -> None:
         """
         Property to set the maximal input sequence length for the model. Longer inputs will be truncated.
         """
-        self._first_module().max_seq_length = value
+        self[0].max_seq_length = value
 
     @property
     def transformers_model(self) -> PreTrainedModel | None:
@@ -1502,7 +1543,10 @@ This pull request has been automatically generated to add {self.__class__.__name
         """
         `torch.dtype`: The dtype of the module (assuming that all the module parameters have the same dtype).
         """
-        return next(self.parameters()).dtype if len(list(self.parameters())) > 0 else None
+        try:
+            return next(self.parameters()).dtype
+        except StopIteration:
+            return None
 
     @property
     def _no_split_modules(self) -> list[str]:

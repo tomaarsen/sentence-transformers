@@ -20,6 +20,7 @@ from .misc import (
     fullname,
     import_from_string,
 )
+from .quantization import quantize_embeddings
 from .retrieval import (
     community_detection,
     information_retrieval,
@@ -28,6 +29,7 @@ from .retrieval import (
     semantic_search,
 )
 from .similarity import (
+    SimilarityFunction,
     cos_sim,
     dot_score,
     euclidean_sim,
@@ -85,7 +87,10 @@ __all__ = [
     "paraphrase_mining",
     "paraphrase_mining_embeddings",
     "semantic_search",
+    # From quantization.py
+    "quantize_embeddings",
     # From similarity.py
+    "SimilarityFunction",
     "cos_sim",
     "dot_score",
     "euclidean_sim",

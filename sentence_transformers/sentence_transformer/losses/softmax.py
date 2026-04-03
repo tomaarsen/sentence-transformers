@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable
+from typing import Any
 
 import torch
 import transformers
@@ -101,6 +102,11 @@ class SoftmaxLoss(nn.Module):
             num_vectors_concatenated += 1
         if concatenation_sent_multiplication:
             num_vectors_concatenated += 1
+        if num_vectors_concatenated == 0:
+            raise ValueError(
+                "At least one of concatenation_sent_rep, concatenation_sent_difference, "
+                "or concatenation_sent_multiplication must be True."
+            )
         logger.info(f"Softmax loss: {num_vectors_concatenated} vectors concatenated")
         self.classifier = nn.Linear(num_vectors_concatenated * embedding_dimension, num_labels, device=model.device)
         self.loss_fct = loss_fct
@@ -138,6 +144,14 @@ class SoftmaxLoss(nn.Module):
             return loss
         else:
             return reps, output
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "num_labels": self.num_labels,
+            "concatenation_sent_rep": self.concatenation_sent_rep,
+            "concatenation_sent_difference": self.concatenation_sent_difference,
+            "concatenation_sent_multiplication": self.concatenation_sent_multiplication,
+        }
 
     @property
     def citation(self) -> str:

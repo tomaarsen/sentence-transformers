@@ -85,7 +85,7 @@ class ContrastiveLoss(nn.Module):
         self.size_average = size_average
 
     def get_config_dict(self) -> dict[str, Any]:
-        distance_metric_name = self.distance_metric.__name__
+        distance_metric_name = getattr(self.distance_metric, "__name__", str(self.distance_metric))
         for name, value in vars(SiameseDistanceMetric).items():
             if value == self.distance_metric:
                 distance_metric_name = f"SiameseDistanceMetric.{name}"

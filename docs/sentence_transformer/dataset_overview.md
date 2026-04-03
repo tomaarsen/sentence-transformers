@@ -33,17 +33,28 @@ Note that it is often simple to transform a dataset from one format to another, 
 
 ## Multimodal Datasets
 
+```{eval-rst}
+
+.. tip::
+
+   Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <../installation.html>`_ for all options.
+
+```
+
 Dataset columns are not limited to text. When using a multimodal model (e.g. a vision-language model like [tomaarsen/Qwen3-VL-Embedding-2B](https://huggingface.co/tomaarsen/Qwen3-VL-Embedding-2B)), columns can contain images, audio, video, or combinations of these modalities. The same dataset format categories described above (Positive Pair, Triplets, etc.) apply. The only difference is that one or more columns hold non-text data instead of strings.
 
 ### Accepted column types
 
+```{eval-rst}
 The following input types are supported:
 
 - **Text**: strings.
 - **Image**: PIL images, file paths, URLs, or numpy/torch arrays.
-- **Audio**: file paths, numpy/torch arrays, dicts with `"array"` and `"sampling_rate"` keys, or `torchcodec.AudioDecoder` instances.
-- **Video**: file paths, numpy/torch arrays, dicts with `"array"` and `"video_metadata"` keys, or `torchcodec.VideoDecoder` instances.
-- **Multimodal dicts**: a dict mapping modality names to values, e.g. `{"text": ..., "audio": ...}`. The keys must be `"text"`, `"image"`, `"audio"`, or `"video"`.
+- **Audio**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"sampling_rate"`` keys, or (if ``torchcodec`` installed) :class:`torchcodec.AudioDecoder <torchcodec.decoders.AudioDecoder>` instances.
+- **Video**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"video_metadata"`` keys, or (if ``torchcodec`` installed) :class:`torchcodec.VideoDecoder <torchcodec.decoders.VideoDecoder>` instances.
+- **Multimodal dicts**: a dict mapping modality names to values, e.g. ``{"text": ..., "audio": ...}``. The keys must be ``"text"``, ``"image"``, ``"audio"``, or ``"video"``.
+- **Chat messages**: a list of dicts with ``"role"`` and ``"content"`` keys for multimodal models that use an uncommon chat template to combine text and non-text inputs.
+```
 
 ### Cross-modal dataset example
 

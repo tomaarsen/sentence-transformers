@@ -118,7 +118,7 @@ class SpladeRegularizerWeightSchedulerCallback(TrainerCallback):
         control: TrainerControl,
         **kwargs,
     ):
-        """Update weight values at the end of each step."""
+        """Update weight values at the beginning of each step."""
         if self.total_steps is None or self.warmup_steps is None:
             return
 

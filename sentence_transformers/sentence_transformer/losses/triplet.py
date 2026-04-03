@@ -86,7 +86,7 @@ class TripletLoss(nn.Module):
 
     def compute_loss_from_embeddings(self, embeddings: list[Tensor], labels: Tensor) -> Tensor:
         """
-        Compute the CoSENT loss from embeddings.
+        Compute the Triplet loss from embeddings.
 
         Args:
             embeddings: List of embeddings
@@ -102,7 +102,7 @@ class TripletLoss(nn.Module):
         return losses.mean()
 
     def get_config_dict(self) -> dict[str, Any]:
-        distance_metric_name = self.distance_metric.__name__
+        distance_metric_name = getattr(self.distance_metric, "__name__", str(self.distance_metric))
         for name, value in vars(TripletDistanceMetric).items():
             if value == self.distance_metric:
                 distance_metric_name = f"TripletDistanceMetric.{name}"

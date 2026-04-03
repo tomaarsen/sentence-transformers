@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sentence_transformers.base.training_args import BaseTrainingArguments
 
 
+@dataclass
 class CrossEncoderTrainingArguments(BaseTrainingArguments):
     r"""
     CrossEncoderTrainingArguments extends :class:`~sentence_transformers.base.training_args.BaseTrainingArguments`

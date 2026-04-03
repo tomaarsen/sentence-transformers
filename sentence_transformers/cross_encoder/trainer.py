@@ -7,13 +7,13 @@ from typing import Any
 import torch
 from torch import nn
 from transformers import (
-    BaseImageProcessor,
     EvalPrediction,
     FeatureExtractionMixin,
     PreTrainedTokenizerBase,
     ProcessorMixin,
     TrainerCallback,
 )
+from transformers.image_processing_utils import BaseImageProcessor
 
 from sentence_transformers.base.evaluation import BaseEvaluator
 from sentence_transformers.base.trainer import BaseTrainer

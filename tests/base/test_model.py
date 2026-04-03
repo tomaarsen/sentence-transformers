@@ -237,7 +237,7 @@ def test_use_auth_token_warns() -> None:
     """Passing use_auth_token should emit a FutureWarning."""
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        SentenceTransformer(modules=[], use_auth_token="fake-token")
+        SentenceTransformer(modules=[torch.nn.Linear(10, 10)], use_auth_token="fake-token")
         future_warnings = [
             x for x in w if issubclass(x.category, FutureWarning) and "use_auth_token" in str(x.message)
         ]
@@ -247,13 +247,19 @@ def test_use_auth_token_warns() -> None:
 def test_use_auth_token_and_token_raises() -> None:
     """Passing both token and use_auth_token should raise ValueError."""
     with pytest.raises(ValueError, match="Both `token` and `use_auth_token`"):
-        SentenceTransformer(modules=[], token="tok", use_auth_token="tok2")
+        SentenceTransformer(modules=[torch.nn.Linear(10, 10)], token="tok", use_auth_token="tok2")
+
+
+def test_empty_modules_raises() -> None:
+    """Passing an empty modules list should raise ValueError."""
+    with pytest.raises(ValueError, match="An empty modules list was passed"):
+        SentenceTransformer(modules=[])
 
 
 def test_cache_folder_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """When cache_folder is None, it should fall back to SENTENCE_TRANSFORMERS_HOME env var."""
     monkeypatch.setenv("SENTENCE_TRANSFORMERS_HOME", "/tmp/fake_cache")
-    model = SentenceTransformer(modules=[])
+    model = SentenceTransformer(modules=[torch.nn.Linear(10, 10)])
     assert model is not None
 
 
@@ -688,3 +694,137 @@ def test_get_max_seq_length(stsb_bert_tiny_model: SentenceTransformer) -> None:
     max_seq = stsb_bert_tiny_model.get_max_seq_length()
     assert isinstance(max_seq, int)
     assert max_seq > 0
+
+
+def test_can_flatten_inputs_transformer_model(
+    stsb_bert_tiny_model: SentenceTransformer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_can_flatten_inputs should delegate to the Transformer module's can_flatten_inputs attribute."""
+    from sentence_transformers.base.modules import Transformer
+
+    assert isinstance(stsb_bert_tiny_model[0], Transformer)
+    # Force can_flatten_inputs on the Transformer to True and check propagation
+    monkeypatch.setattr(stsb_bert_tiny_model[0], "can_flatten_inputs", True)
+    assert stsb_bert_tiny_model._can_flatten_inputs() is True
+    # Force it to False and check
+    monkeypatch.setattr(stsb_bert_tiny_model[0], "can_flatten_inputs", False)
+    assert stsb_bert_tiny_model._can_flatten_inputs() is False
+
+
+def test_can_flatten_inputs_static_model(static_retrieval_mrl_en_v1_model: SentenceTransformer) -> None:
+    """A StaticEmbedding model (non-Transformer first module) should not support flattened inputs."""
+    from sentence_transformers.base.modules import Transformer
+
+    assert not isinstance(static_retrieval_mrl_en_v1_model[0], Transformer)
+    assert static_retrieval_mrl_en_v1_model._can_flatten_inputs() is False
+
+
+def test_dtype_property(stsb_bert_tiny_model: SentenceTransformer) -> None:
+    """dtype should return a torch.dtype for a model with parameters."""
+    dtype = stsb_bert_tiny_model.dtype
+    assert isinstance(dtype, torch.dtype)
+
+
+def test_dtype_no_parameters() -> None:
+    """dtype should return None for a model with no parameters."""
+    model = SentenceTransformer(modules=[torch.nn.Module()])
+    assert model.dtype is None
+
+
+def test_is_singular_input_string(stsb_bert_tiny_model: SentenceTransformer) -> None:
+    """A string input should be singular."""
+    assert stsb_bert_tiny_model.is_singular_input("hello") is True
+
+
+def test_is_singular_input_list(stsb_bert_tiny_model: SentenceTransformer) -> None:
+    """A list input should be a batch (not singular)."""
+    assert stsb_bert_tiny_model.is_singular_input(["hello", "world"]) is False
+
+
+def test_is_singular_input_tuple(stsb_bert_tiny_model: SentenceTransformer) -> None:
+    """A tuple input should be a batch (not singular)."""
+    assert stsb_bert_tiny_model.is_singular_input(("hello", "world")) is False
+
+
+def test_is_singular_input_numpy(stsb_bert_tiny_model: SentenceTransformer) -> None:
+    """A numpy array should be singular (not a list type)."""
+    assert stsb_bert_tiny_model.is_singular_input(np.array([1, 2, 3])) is True
+
+
+def test_is_singular_input_tensor(stsb_bert_tiny_model: SentenceTransformer) -> None:
+    """A torch tensor should be singular (not a list type)."""
+    assert stsb_bert_tiny_model.is_singular_input(torch.tensor([1, 2, 3])) is True
+
+
+@pytest.mark.parametrize(
+    "initial_prompts, config_prompts, expected_prompts",
+    [
+        ({}, {"query": "Search: ", "passage": "Passage: "}, {"query": "Search: ", "passage": "Passage: "}),
+        (
+            {"query": "My custom: "},
+            {"query": "Search: ", "passage": "Passage: "},
+            {"query": "My custom: ", "passage": "Passage: "},
+        ),
+        ({"query": ""}, {"query": "Search: "}, {"query": ""}),
+        ({"query": None}, {"query": "Search: "}, {"query": "Search: "}),
+    ],
+    ids=[
+        "saved_prompts_fill_empty_slots",
+        "user_prompts_not_overwritten",
+        "empty_string_is_intentional",
+        "none_placeholder_is_overwritten",
+    ],
+)
+def test_parse_model_config_prompts(
+    stsb_bert_tiny_model: SentenceTransformer, initial_prompts, config_prompts, expected_prompts
+) -> None:
+    stsb_bert_tiny_model.prompts = initial_prompts
+    stsb_bert_tiny_model.default_prompt_name = None
+    stsb_bert_tiny_model._parse_model_config({"prompts": config_prompts})
+    assert stsb_bert_tiny_model.prompts == expected_prompts
+
+
+@pytest.mark.parametrize(
+    "initial_default, config_default, expected_default",
+    [
+        (None, "query", "query"),
+        ("my_prompt", "query", "my_prompt"),
+    ],
+    ids=["from_config_when_none", "not_overwritten_when_set"],
+)
+def test_parse_model_config_default_prompt_name(
+    stsb_bert_tiny_model: SentenceTransformer, initial_default, config_default, expected_default
+) -> None:
+    stsb_bert_tiny_model.prompts = {}
+    stsb_bert_tiny_model.default_prompt_name = initial_default
+    stsb_bert_tiny_model._parse_model_config({"default_prompt_name": config_default})
+    assert stsb_bert_tiny_model.default_prompt_name == expected_default
+
+
+def test_get_model_type_no_config_defaults_to_sentence_transformer(
+    stsb_bert_tiny_model: SentenceTransformer, tmp_path: Path
+) -> None:
+    """When config_sentence_transformers.json is missing, _get_model_type defaults to 'SentenceTransformer'."""
+    # Empty directory, no config file
+    result = stsb_bert_tiny_model._get_model_type(str(tmp_path), token=None, cache_folder=None, local_files_only=True)
+    assert result == "SentenceTransformer"
+
+
+def test_get_model_type_missing_key_defaults_to_sentence_transformer(
+    stsb_bert_tiny_model: SentenceTransformer, tmp_path: Path
+) -> None:
+    """A config without 'model_type' key should default to 'SentenceTransformer' (backward compat)."""
+    config_path = tmp_path / "config_sentence_transformers.json"
+    config_path.write_text(json.dumps({"__version__": "1.0.0"}), encoding="utf8")
+
+    result = stsb_bert_tiny_model._get_model_type(str(tmp_path), token=None, cache_folder=None, local_files_only=True)
+    assert result == "SentenceTransformer"
+
+
+def test_get_model_type_reads_model_type(stsb_bert_tiny_model: SentenceTransformer, tmp_path: Path) -> None:
+    """_get_model_type should return the model_type from config when present."""
+    config_path = tmp_path / "config_sentence_transformers.json"
+    config_path.write_text(json.dumps({"__version__": "1.0.0", "model_type": "SparseEncoder"}), encoding="utf8")
+
+    result = stsb_bert_tiny_model._get_model_type(str(tmp_path), token=None, cache_folder=None, local_files_only=True)
+    assert result == "SparseEncoder"

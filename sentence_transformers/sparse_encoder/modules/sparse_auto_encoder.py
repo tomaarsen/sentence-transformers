@@ -18,7 +18,8 @@ class TiedTranspose(nn.Module):
         self.linear = linear
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        assert self.linear.bias is None
+        if self.linear.bias is not None:
+            raise ValueError("TiedTranspose does not support layers with bias.")
         return F.linear(x, self.linear.weight.t(), None)
 
     @property
@@ -109,10 +110,12 @@ class SparseAutoEncoder(Module):
         x, mu, std = self.LN(x)
         return x, dict(mu=mu, std=std)
 
-    def top_k(self, x: torch.Tensor, k: int | None = None, compute_aux: bool = True) -> torch.Tensor:
+    def top_k(
+        self, x: torch.Tensor, k: int | None = None, compute_aux: bool = True
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """
         :param x: input data (shape: [batch, input_dim])
-        :return: autoencoder latents (shape: [batch, hidden_dim])
+        :return: tuple of (top-k latents (shape: [batch, hidden_dim]), auxiliary latents or None)
         """
         if k is None:
             k = self.k

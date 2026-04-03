@@ -70,10 +70,14 @@ Once you have `installed <../../installation.html>`_ Sentence Transformers, you 
 
 Some CrossEncoder models also support multimodal inputs, allowing you to score pairs that include images, not just text. You can check which modalities a model supports using the :attr:`~sentence_transformers.cross_encoder.model.CrossEncoder.modalities` property and the :meth:`~sentence_transformers.cross_encoder.model.CrossEncoder.supports` method. Each element in a pair can be any of the following:
 
+.. tip::
+
+   Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <../../installation.html>`_ for all options.
+
 - **Text**: strings.
 - **Image**: PIL images, file paths, URLs, or numpy/torch arrays.
-- **Audio**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"sampling_rate"`` keys, or ``torchcodec.AudioDecoder`` instances.
-- **Video**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"video_metadata"`` keys, or ``torchcodec.VideoDecoder`` instances.
+- **Audio**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"sampling_rate"`` keys, or (if ``torchcodec`` installed) :class:`torchcodec.AudioDecoder <torchcodec.decoders.AudioDecoder>` instances.
+- **Video**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"video_metadata"`` keys, or (if ``torchcodec`` installed) :class:`torchcodec.VideoDecoder <torchcodec.decoders.VideoDecoder>` instances.
 - **Multimodal dicts**: a dict mapping modality names to values, e.g. ``{"text": ..., "image": ...}``. The keys must be ``"text"``, ``"image"``, ``"audio"``, or ``"video"``.
 
 The two elements in a pair can have different modalities (e.g. a text query with an image document), depending on the underlying model architecture:

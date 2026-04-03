@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import logging
 import math
+import queue
 from collections.abc import Callable
 from multiprocessing import Queue
 from typing import Any, Literal, overload
@@ -45,7 +46,9 @@ class SparseEncoder(BaseModel):
             computation. If None, checks if a GPU can be used. Defaults to None.
         prompts (dict[str, str], optional): A dictionary with prompts for the model. The key is the prompt name,
             the value is the prompt text. The prompt text will be prepended before any text to encode. For example:
-            ``{"query": "query: ", "passage": "passage: "}``. Defaults to None.
+            ``{"query": "query: ", "passage": "passage: "}``. If a model has saved prompts, you can override
+            them by passing your own, or pass ``{"query": "", "document": ""}`` to disable them.
+            Defaults to None.
         default_prompt_name (str, optional): The name of the prompt that should be used by default. If not set,
             no prompt will be applied. Defaults to None.
         cache_folder (str, optional): Path to store models. Can also be set by the ``SENTENCE_TRANSFORMERS_HOME``
@@ -129,7 +132,7 @@ class SparseEncoder(BaseModel):
 
     model_card_data_class = SparseEncoderModelCardData
     default_huggingface_organization: str | None = "sparse-encoder"
-    _default_prompts: dict[str, str] = {"query": "", "document": ""}
+    _default_prompts: dict[str, str | None] = {"query": None, "document": None}
     _model_card_model_id_placeholder = "sparse_encoder_model_id"
 
     @deprecated_kwargs(tokenizer_kwargs="processor_kwargs")
@@ -435,12 +438,14 @@ class SparseEncoder(BaseModel):
                 print(embeddings.shape)
                 # (3, 30522)
         """
-        self.eval()
         if show_progress_bar is None:
             show_progress_bar = logger.getEffectiveLevel() in (
                 logging.INFO,
                 logging.DEBUG,
             )
+
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}.")
 
         # Cast an individual input to a list with length 1
         is_singular_input = self.is_singular_input(inputs)
@@ -493,6 +498,7 @@ class SparseEncoder(BaseModel):
             device = self.device
 
         self.to(device)
+        self.eval()
 
         max_active_dims = max_active_dims if max_active_dims is not None else self.max_active_dims
 
@@ -754,11 +760,22 @@ class SparseEncoder(BaseModel):
         Workers are terminated externally via ``stop_multi_process_pool``.
         """
         while True:
-            chunk_id, inputs, kwargs = input_queue.get()
-            embeddings = model.encode(inputs, device=target_device, **kwargs)
-            if isinstance(embeddings, torch.Tensor) and embeddings.device.type != "cpu":
-                embeddings = embeddings.cpu()
-            results_queue.put([chunk_id, embeddings])
+            try:
+                chunk_id, inputs, kwargs = input_queue.get()
+                embeddings = model.encode(inputs, device=target_device, **kwargs)
+                if isinstance(embeddings, torch.Tensor) and embeddings.device.type != "cpu":
+                    embeddings = embeddings.cpu()
+                results_queue.put([chunk_id, embeddings])
+
+            except queue.Empty:
+                break
+            except Exception as e:
+                logger.error(f"Error in worker process on {target_device}: {e}")
+                try:
+                    results_queue.put([chunk_id, None, str(e)])
+                except Exception:
+                    pass
+                break
 
     def get_embedding_dimension(self) -> int | None:
         """
@@ -1034,7 +1051,7 @@ class SparseEncoder(BaseModel):
         Property to set the maximal input sequence length for the model. Longer inputs will be truncated.
         """
         # Setter must be re-declared because the getter is overridden (Python property limitation)
-        self._first_module().max_seq_length = value
+        self[0].max_seq_length = value
 
     @property
     def transformers_model(self) -> PreTrainedModel | None:

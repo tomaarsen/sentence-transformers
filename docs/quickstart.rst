@@ -17,7 +17,9 @@ Once you have `installed <installation.html>`_ Sentence Transformers, you can ea
 
    1. :class:`SentenceTransformer <sentence_transformers.sentence_transformer.model.SentenceTransformer>`
    2. :meth:`SentenceTransformer.encode <sentence_transformers.sentence_transformer.model.SentenceTransformer.encode>`
-   3. :meth:`SentenceTransformer.similarity <sentence_transformers.sentence_transformer.model.SentenceTransformer.similarity>`
+   3. :meth:`SentenceTransformer.encode_query <sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_query>`
+   4. :meth:`SentenceTransformer.encode_document <sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_document>`
+   5. :meth:`SentenceTransformer.similarity <sentence_transformers.sentence_transformer.model.SentenceTransformer.similarity>`
 
    **Other useful methods and links:**
 
@@ -59,6 +61,10 @@ Once you have `installed <installation.html>`_ Sentence Transformers, you can ea
       #         [0.1046, 0.1411, 1.0000]])
 
 .. tab:: Multimodal
+
+   .. tip::
+
+      Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <installation.html>`_ for all options.
 
    .. code-block:: python
 

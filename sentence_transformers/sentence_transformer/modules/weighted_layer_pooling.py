@@ -31,7 +31,9 @@ class WeightedLayerPooling(Module):
         )
 
     def forward(self, features: dict[str, Tensor]):
-        ft_all_layers = features["all_layer_embeddings"]
+        ft_all_layers = features.get("all_layer_embeddings")
+        if ft_all_layers is None:
+            return features
 
         all_layer_embedding = torch.stack(ft_all_layers)
         all_layer_embedding = all_layer_embedding[self.layer_start :, :, :, :]  # Start from 4th layers output

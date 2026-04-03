@@ -268,7 +268,7 @@ class Module(ABC, torch.nn.Module):
         cache_folder: str | None = None,
         revision: str | None = None,
         local_files_only: bool = False,
-    ) -> str:
+    ) -> str | None:
         """
         A utility function to load a directory from a model checkpoint. The checkpoint can be either a local directory or a model id on Hugging Face.
 
@@ -286,7 +286,7 @@ class Module(ABC, torch.nn.Module):
             local_files_only (bool, optional): Whether to only load local files. Defaults to False.
 
         Returns:
-            str: The path to the loaded directory.
+            str | None: The path to the loaded directory.
         """
         return load_dir_path(
             model_name_or_path=model_name_or_path,

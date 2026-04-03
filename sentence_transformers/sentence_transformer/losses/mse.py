@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -77,10 +78,14 @@ class MSELoss(nn.Module):
         if len(sentence_features) > 1:
             embeddings = torch.cat([self.model(inputs)["sentence_embedding"] for inputs in sentence_features], dim=0)
             # Repeat the labels for each input
-            return self.loss_fct(embeddings, labels.repeat(len(sentence_features), 1))
+            repeat_dims = [len(sentence_features)] + [1] * (labels.dim() - 1)
+            return self.loss_fct(embeddings, labels.repeat(*repeat_dims))
 
         embeddings = self.model(sentence_features[0])["sentence_embedding"]
         return self.loss_fct(embeddings, labels)
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {}
 
     @property
     def citation(self) -> str:

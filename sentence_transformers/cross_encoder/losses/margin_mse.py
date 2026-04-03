@@ -158,9 +158,9 @@ class MarginMSELoss(nn.Module):
         Returns:
             Tensor: The logits for the pairs.
         """
-        tokens = self.model.preprocess(pairs, prompt=prompt, task=task)
-        tokens.to(self.model.device)
-        logits = self.model(tokens)["scores"].view(-1)
+        inputs = self.model.preprocess(pairs, prompt=prompt, task=task)
+        inputs = inputs.to(self.model.device)
+        logits = self.model(inputs)["scores"].view(-1)
         return self.activation_fn(logits)
 
     def get_config_dict(self):

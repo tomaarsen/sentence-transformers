@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -167,6 +168,13 @@ class MegaBatchMarginLoss(nn.Module):
         negatives_max, _ = torch.max(negative_scores, dim=1)
         losses = F.relu(self.positive_margin - positive_scores) + F.relu(negatives_max - self.negative_margin)
         return losses.mean()
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "positive_margin": self.positive_margin,
+            "negative_margin": self.negative_margin,
+            "mini_batch_size": self.mini_batch_size,
+        }
 
     @property
     def citation(self) -> str:

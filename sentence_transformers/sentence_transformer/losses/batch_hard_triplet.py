@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -256,6 +257,12 @@ class BatchHardTripletLoss(nn.Module):
         # Uses broadcasting where the 1st argument has shape (1, batch_size) and the 2nd (batch_size, 1)
 
         return ~(labels.unsqueeze(0) == labels.unsqueeze(1))
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "distance_metric": getattr(self.distance_metric, "__name__", str(self.distance_metric)),
+            "margin": self.triplet_margin,
+        }
 
     @property
     def citation(self) -> str:

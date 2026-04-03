@@ -339,7 +339,7 @@ class MultipleNegativesRankingLoss(nn.Module):
     def get_config_dict(self) -> dict[str, Any]:
         return {
             "scale": self.scale,
-            "similarity_fct": self.similarity_fct.__name__,
+            "similarity_fct": getattr(self.similarity_fct, "__name__", str(self.similarity_fct)),
             "gather_across_devices": self.gather_across_devices,
             "directions": self.directions,
             "partition_mode": self.partition_mode,

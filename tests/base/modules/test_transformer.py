@@ -1253,3 +1253,49 @@ class TestCountMediaPerSample:
 
     def test_empty_batch(self):
         assert _count_media_per_sample([]) == ([], [])
+
+
+class TestTransformerSaveLoadRoundtrip:
+    def test_save_load_produces_same_output(self, bert_tiny_transformer: Transformer, tmp_path):
+        """Test that a Transformer can be saved and loaded, producing identical output."""
+        save_dir = str(tmp_path / "transformer_roundtrip")
+        bert_tiny_transformer.save(save_dir)
+
+        # Verify config.json exists and has expected keys
+        config_path = Path(save_dir) / "config.json"
+        assert config_path.exists()
+        with open(config_path) as f:
+            config_data = json.load(f)
+        assert "model_type" in config_data
+        assert "architectures" in config_data
+
+        # Verify sentence_bert_config.json exists
+        st_config_path = Path(save_dir) / Transformer.config_file_name
+        assert st_config_path.exists()
+
+        # Load and compare outputs on CPU to avoid cross-device precision issues
+        reloaded = Transformer.load(save_dir)
+        bert_tiny_transformer.cpu()
+        reloaded.cpu()
+
+        features_original = bert_tiny_transformer.preprocess(["Hello world"])
+        features_reloaded = reloaded.preprocess(["Hello world"])
+
+        with torch.no_grad():
+            out_original = bert_tiny_transformer.forward(features_original)
+            out_reloaded = reloaded.forward(features_reloaded)
+
+        assert torch.equal(out_original["token_embeddings"], out_reloaded["token_embeddings"])
+
+
+class TestTransformerForwardEmptyBatch:
+    def test_forward_empty_inputs(self, bert_tiny_transformer: Transformer):
+        """Test that forward with an empty batch (zero-length tensors) raises a RuntimeError
+        because the underlying model cannot reshape zero-element tensors."""
+        features = {
+            "input_ids": torch.zeros(0, 5, dtype=torch.long),
+            "attention_mask": torch.zeros(0, 5, dtype=torch.long),
+        }
+        features = batch_to_device(features, bert_tiny_transformer.model.device)
+        with pytest.raises(RuntimeError):
+            bert_tiny_transformer.forward(features)

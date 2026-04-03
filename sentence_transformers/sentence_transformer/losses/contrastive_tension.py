@@ -4,6 +4,7 @@ import copy
 import math
 import random
 from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
 import torch
@@ -166,6 +167,9 @@ class ContrastiveTensionLoss(nn.Module):
         loss = self.criterion(sim_scores, labels.type_as(sim_scores))
         return loss
 
+    def get_config_dict(self) -> dict[str, Any]:
+        return {}
+
     @property
     def citation(self) -> str:
         return """
@@ -262,6 +266,12 @@ class ContrastiveTensionLossInBatchNegatives(nn.Module):
         scores = self.similarity_fct(embeddings_a, embeddings_b) * self.logit_scale.exp()  # self.scale
         labels = torch.arange(len(scores), dtype=torch.long, device=scores.device)
         return (self.cross_entropy_loss(scores, labels) + self.cross_entropy_loss(scores.t(), labels)) / 2
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "scale": self.logit_scale.exp().item(),
+            "similarity_fct": getattr(self.similarity_fct, "__name__", str(self.similarity_fct)),
+        }
 
     @property
     def citation(self) -> str:

@@ -149,6 +149,11 @@ Extending a model to new languages is easy by following [Training Examples > Mul
 Sentence Transformers supports multimodal models that can embed text alongside images, audio, or video into a joint vector space. This enables cross-modal tasks like text-to-image search, image-to-image search, image clustering, and zero-shot classification.
 
 ```{eval-rst}
+
+.. tip::
+
+   Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <../installation.html>`_ for all options.
+
 You can check which modalities a model supports using the :attr:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.modalities` property and :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.supports` method:
 ```
 

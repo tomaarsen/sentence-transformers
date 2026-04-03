@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -149,9 +150,9 @@ class BatchSemiHardTripletLoss(nn.Module):
         mask_positives = mask_positives.to(labels.device)
         num_positives = torch.sum(mask_positives)
 
-        triplet_loss = (
-            torch.sum(torch.max(loss_mat * mask_positives, torch.tensor([0.0], device=labels.device))) / num_positives
-        )
+        triplet_loss = torch.sum(
+            torch.max(loss_mat * mask_positives, torch.tensor([0.0], device=labels.device))
+        ) / num_positives.clamp(min=1e-16)
 
         return triplet_loss
 
@@ -172,6 +173,12 @@ class BatchSemiHardTripletLoss(nn.Module):
         masked_maximums += axis_minimums
 
         return masked_maximums
+
+    def get_config_dict(self) -> dict[str, Any]:
+        return {
+            "distance_metric": getattr(self.distance_metric, "__name__", str(self.distance_metric)),
+            "margin": self.margin,
+        }
 
     @property
     def citation(self) -> str:

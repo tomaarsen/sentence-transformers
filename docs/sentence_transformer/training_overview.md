@@ -132,6 +132,10 @@ But if instead you want to train from another checkpoint, or from scratch, then 
 
 .. tab:: Multimodal / Vision-Language
 
+    .. tip::
+
+        Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <../installation.html>`_ for all options.
+
     You can also train multimodal Sentence Transformer models from Vision-Language Model (VLM) checkpoints. The :class:`~sentence_transformers.base.modules.Transformer` module automatically detects supported modalities (text, image, audio, video) from the model's processor. You can load an already-trained multimodal embedding model:
 
     .. raw:: html
@@ -171,6 +175,67 @@ But if instead you want to train from another checkpoint, or from scratch, then 
         # True
 
     The ``"message"`` modality means the model can handle mixed-modality inputs (e.g. an image and text together) via the chat template format. Multimodal training data can include text strings, PIL images, image file paths or URLs, audio arrays, or multimodal dicts like ``{"image": <PIL.Image>, "text": "describe this"}``. See the `multimodal training examples <training/examples.html#multimodal>`_ for full training scripts.
+
+.. tab:: Multimodal via Router
+
+    You can also build multimodal models by composing separate encoders for different modalities using the :class:`~sentence_transformers.base.modules.Router` module. Unlike the VLM approach above (which uses a single backbone that natively handles multiple modalities), the Router approach lets you combine *any* existing encoders. For example, a text encoder and an image encoder, and route inputs to the appropriate encoder based on the detected modality.
+
+    .. raw:: html
+
+        <div class="sidebar">
+            <p class="sidebar-title">Documentation</p>
+            <ul class="simple">
+                <li><a class="reference internal" href="../package_reference/base/modules.html#sentence_transformers.base.modules.Router"><code class="xref py py-class docutils literal notranslate"><span class="pre">sentence_transformers.base.modules.Router</span></code></a></li>
+                <li><a class="reference internal" href="../package_reference/base/modules.html#sentence_transformers.base.modules.Transformer"><code class="xref py py-class docutils literal notranslate"><span class="pre">sentence_transformers.base.modules.Transformer</span></code></a></li>
+                <li><a class="reference internal" href="../package_reference/base/modules.html#sentence_transformers.base.modules.Pooling"><code class="xref py py-class docutils literal notranslate"><span class="pre">sentence_transformers.base.modules.Pooling</span></code></a></li>
+                <li><a class="reference internal" href="../package_reference/base/modules.html#sentence_transformers.base.modules.Dense"><code class="xref py py-class docutils literal notranslate"><span class="pre">sentence_transformers.base.modules.Dense</span></code></a></li>
+            </ul>
+        </div>
+
+    ::
+
+        from sentence_transformers import SentenceTransformer
+        from sentence_transformers.sentence_transformer.modules import Dense, Pooling, Router, Transformer
+
+        # Create separate encoders for different modalities
+        text_encoder = Transformer("sentence-transformers/all-MiniLM-L6-v2")
+        text_pooling = Pooling(text_encoder.get_embedding_dimension(), pooling_mode="mean")
+        # Project text embeddings to match image encoder dimension
+        text_projection = Dense(text_encoder.get_embedding_dimension(), 768)
+
+        # SigLIP outputs pooled embeddings directly, so no separate Pooling module is needed
+        image_encoder = Transformer("google/siglip2-base-patch16-224")
+
+        # Route inputs based on modality
+        router = Router(
+            sub_modules={
+                "text": [text_encoder, text_pooling, text_projection],
+                "image": [image_encoder],
+            },
+        )
+
+        model = SentenceTransformer(modules=[router])
+
+    The Router automatically infers the modality from the input data. Text strings are routed to the text encoder, and image URLs (or PIL images) are routed to the image encoder::
+
+        text_embeddings = model.encode(["A photo of a cat", "A pollinator on a flower"])
+        image_embeddings = model.encode([
+            "https://huggingface.co/datasets/huggingface/cats-image/resolve/main/cats_image.jpeg",
+            "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/bee.jpg",
+        ])
+        print(text_embeddings.shape, image_embeddings.shape)
+        # (2, 768) (2, 768)
+
+        similarity = model.similarity(text_embeddings, image_embeddings)
+        print(similarity)
+        # tensor([[ 0.0028, -0.0144],
+        #         [-0.0233, -0.0355]])
+
+    You can also combine Router-based multimodality with task-based routing (e.g. different encoders for queries vs. documents) using ``route_mappings``. See the :class:`~sentence_transformers.base.modules.Router` documentation for advanced routing scenarios.
+
+    .. warning::
+
+        Since Router-based multimodal models use separate encoders per modality, their embedding spaces are initially unaligned. Training is required to align the spaces for meaningful cross-modal similarity. Consider using a :class:`~sentence_transformers.base.modules.Dense` projection layer to map embeddings from different encoders into a shared space, as shown above.
 
 ```
 
@@ -293,6 +358,11 @@ Additionally, if your dataset has extraneous columns (e.g. sample_id, metadata, 
 ### Multimodal Datasets
 
 ```{eval-rst}
+
+.. tip::
+
+   Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <../installation.html>`_ for all options.
+
 SentenceTransformer datasets are not limited to text columns. When using a multimodal model (e.g. a vision-language model), input columns can also contain images (as PIL images, file paths, or URLs), audio, video, or multimodal dictionaries combining multiple modalities. The dataset format rules from `Dataset Format <#dataset-format>`_ still apply: non-label columns are treated as inputs, and a ``"label"`` column provides the target score or class.
 
 For example, a dataset for document screenshot retrieval might have a text ``"query"`` column and an ``"image"`` column containing PIL images::

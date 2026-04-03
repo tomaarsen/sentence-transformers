@@ -68,3 +68,4 @@ class WordWeights(Module):
 
     def save(self, output_path: str, *args, safe_serialization: bool = True, **kwargs) -> None:
         self.save_config(output_path)
+        self.save_torch_weights(output_path, safe_serialization=safe_serialization)

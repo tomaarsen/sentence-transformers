@@ -51,7 +51,9 @@ class CrossEncoder(BaseModel, FitMixin):
             computation. If None, checks if a GPU can be used. Defaults to None.
         prompts (dict[str, str], optional): A dictionary with prompts for the model. The key is the prompt name,
             the value is the prompt text. The prompt text will be prepended before any text to encode. For example:
-            ``{"query": "query: ", "passage": "passage: "}``. Defaults to None.
+            ``{"query": "query: ", "passage": "passage: "}``. If a model has saved prompts, you can override
+            them by passing your own, or pass ``{"query": "", "document": ""}`` to disable them.
+            Defaults to None.
         default_prompt_name (str, optional): The name of the prompt that should be used by default. If not set,
             no prompt will be applied. Defaults to None.
         cache_folder (str, optional): Path to store models. Can also be set by the ``SENTENCE_TRANSFORMERS_HOME``
@@ -246,9 +248,18 @@ class CrossEncoder(BaseModel, FitMixin):
                 config_kwargs=config_kwargs,
                 backend=self.backend,
             )
+            true_token_id = transformer_model.tokenizer.convert_tokens_to_ids("yes")
+            false_token_id = transformer_model.tokenizer.convert_tokens_to_ids("no")
+            if true_token_id is None or false_token_id is None:
+                raise ValueError(
+                    "The tokenizer does not have 'yes' and/or 'no' tokens, which are used as the "
+                    "default true/false tokens for the LogitScore post-processing module. Please "
+                    "provide custom modules with your desired LogitScore configuration, or use a "
+                    "model with a tokenizer that supports these tokens."
+                )
             post_processing = LogitScore(
-                true_token_id=transformer_model.tokenizer.convert_tokens_to_ids("yes"),
-                false_token_id=transformer_model.tokenizer.convert_tokens_to_ids("no"),
+                true_token_id=true_token_id,
+                false_token_id=false_token_id,
             )
             return [transformer_model, post_processing], {}
 
@@ -349,6 +360,7 @@ class CrossEncoder(BaseModel, FitMixin):
 
         """
         while True:
+            chunk_id = None
             try:
                 chunk_id, sentence_pairs, kwargs = input_queue.get()
                 scores = model.predict(sentence_pairs, device=target_device, **kwargs)
@@ -600,6 +612,14 @@ class CrossEncoder(BaseModel, FitMixin):
                 scores = model.predict(sentences, pool=pool)
                 model.stop_multi_process_pool(pool)
         """
+        if show_progress_bar is None:
+            show_progress_bar = (
+                logger.getEffectiveLevel() == logging.INFO or logger.getEffectiveLevel() == logging.DEBUG
+            )
+
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be a positive integer, got {batch_size}.")
+
         # Cast an individual pair to a list with length 1
         is_singular_input = self.is_singular_input(inputs)
         if is_singular_input:
@@ -631,11 +651,6 @@ class CrossEncoder(BaseModel, FitMixin):
             if is_singular_input:
                 pred_scores = pred_scores[0]
             return pred_scores
-
-        if show_progress_bar is None:
-            show_progress_bar = (
-                logger.getEffectiveLevel() == logging.INFO or logger.getEffectiveLevel() == logging.DEBUG
-            )
 
         prompt = self._resolve_prompt(prompt, prompt_name)
 
@@ -819,9 +834,12 @@ class CrossEncoder(BaseModel, FitMixin):
         """
         list_types = (list, tuple)
         if is_datasets_available():
-            from datasets import Column
+            try:
+                from datasets import Column
 
-            list_types += (Column,)
+                list_types += (Column,)
+            except ImportError:
+                pass
         return (not isinstance(inputs, list_types)) or (len(inputs) > 0 and not isinstance(inputs[0], list_types))
 
     def _get_model_config(self) -> dict[str, Any]:

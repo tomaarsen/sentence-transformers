@@ -15,7 +15,9 @@ Once you have `installed <../../installation.html>`_ Sentence Transformers, you 
 
    1. :class:`SentenceTransformer <sentence_transformers.sentence_transformer.model.SentenceTransformer>`
    2. :meth:`SentenceTransformer.encode <sentence_transformers.sentence_transformer.model.SentenceTransformer.encode>`
-   3. :meth:`SentenceTransformer.similarity <sentence_transformers.sentence_transformer.model.SentenceTransformer.similarity>`
+   3. :meth:`SentenceTransformer.encode_query <sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_query>`
+   4. :meth:`SentenceTransformer.encode_document <sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_document>`
+   5. :meth:`SentenceTransformer.similarity <sentence_transformers.sentence_transformer.model.SentenceTransformer.similarity>`
 
 ::
 
@@ -45,10 +47,14 @@ Once you have `installed <../../installation.html>`_ Sentence Transformers, you 
 
 Some Sentence Transformer models support inputs beyond text, such as images, audio, or video. You can check which modalities a model supports using the :attr:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.modalities` property and the :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.supports` method. The :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode` method accepts different input formats depending on the modality:
 
+.. tip::
+
+   Multimodal models require additional dependencies. Install them with e.g. ``pip install -U "sentence-transformers[image]"`` for image support. See `Installation <../../installation.html>`_ for all options.
+
 - **Text**: strings.
 - **Image**: PIL images, file paths, URLs, or numpy/torch arrays.
-- **Audio**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"sampling_rate"`` keys, or ``torchcodec.AudioDecoder`` instances.
-- **Video**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"video_metadata"`` keys, or ``torchcodec.VideoDecoder`` instances.
+- **Audio**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"sampling_rate"`` keys, or (if ``torchcodec`` installed) :class:`torchcodec.AudioDecoder <torchcodec.decoders.AudioDecoder>` instances.
+- **Video**: file paths, numpy/torch arrays, dicts with ``"array"`` and ``"video_metadata"`` keys, or (if ``torchcodec`` installed) :class:`torchcodec.VideoDecoder <torchcodec.decoders.VideoDecoder>` instances.
 - **Multimodal dicts**: a dict mapping modality names to values, e.g. ``{"text": ..., "audio": ...}``. The keys must be ``"text"``, ``"image"``, ``"audio"``, or ``"video"``.
 - **Chat messages**: a list of dicts with ``"role"`` and ``"content"`` keys for multimodal models that use an uncommon chat template to combine text and non-text inputs.
 
@@ -100,6 +106,37 @@ The following example loads a multimodal model and computes similarities between
    #         [0.1999, 0.1108],
    #         [0.1255, 0.6749],
    #         [0.1283, 0.2704]])
+
+For retrieval tasks, :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_query` and :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_document` are the recommended methods. Many embedding models use different prompts or instructions for queries vs. documents, and these methods handle that automatically:
+
+- :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_query` uses the model's ``"query"`` prompt (if available) and sets ``task="query"``.
+- :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode_document` uses the first available prompt from ``"document"``, ``"passage"``, or ``"corpus"``, and sets ``task="document"``.
+
+These methods accept all the same input types as :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode` (text, images, URLs, multimodal dicts, etc.) and pass through all the same parameters. For models without specialized query/document prompts, they behave identically to :meth:`~sentence_transformers.sentence_transformer.model.SentenceTransformer.encode`.
+
+.. code-block:: python
+
+   from sentence_transformers import SentenceTransformer
+
+   model = SentenceTransformer("tomaarsen/Qwen3-VL-Embedding-2B")
+
+   # Encode text queries with the query prompt
+   query_embeddings = model.encode_query([
+       "Find me a photo of a vehicle parked near a building",
+       "Show me an image of a pollinating insect",
+   ])
+
+   # Encode document screenshots with the document prompt
+   doc_embeddings = model.encode_document([
+       "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/transformers/tasks/car.jpg",
+       "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/bee.jpg",
+   ])
+
+   # Compute similarities
+   similarities = model.similarity(query_embeddings, doc_embeddings)
+   print(similarities)
+   # tensor([[0.3907, 0.1490],
+   #         [0.1235, 0.4872]])
 
 .. toctree::
    :maxdepth: 1
