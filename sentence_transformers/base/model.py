@@ -51,6 +51,7 @@ from sentence_transformers.util.file_io import _resolve_model_revision
 from sentence_transformers.util.misc import ORIGINAL_TRANSFORMER_MODELS
 
 if TYPE_CHECKING:
+    from accelerate.hooks import ModelHook
     from transformers import PretrainedConfig
 
 logger = transformers_logging.get_logger(__name__)
@@ -88,6 +89,8 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
     model_type: str
     # Set per instance by `_load_with_module_classes` before `__init__` runs the loading, never mutated.
     _module_classes: Mapping[str, type[nn.Module]] = {}
+    # The `device_map` this model was loaded with, if any. Set per instance by `__init__`.
+    _device_map: str | dict[str, Any] | None = None
 
     def __init__(
         self,
@@ -270,18 +273,15 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         # The first module (e.g. Transformer) is the dtype source of truth and downstream
         # modules (Dense, Pooling, etc.) should match it.
         first_param = next(self[0].parameters(), None)
-        if first_param is not None:
+        self._device_map = device_map
+        if self._placement_is_delegated:
+            self._align_modules_around_backbone(dtype=first_param.dtype if first_param is not None else None)
+        elif first_param is not None:
             first_dtype = first_param.dtype
             for module in list(self.children())[1:]:
                 module.to(first_dtype)
 
-        if device_map is not None:
-            # accelerate already placed the backbone, so leave it untouched and only move the remaining
-            # modules (Pooling, Dense, etc.) onto its device to keep the forward pass on one device.
-            backbone_device = self.device
-            for module in list(self.children())[1:]:
-                module.to(backbone_device)
-        else:
+        if not self._placement_is_delegated:
             self.to(device)
         self.is_hpu_graph_enabled = False
 
@@ -1516,18 +1516,107 @@ This pull request has been automatically generated to add {self.__class__.__name
                 except TypeError:
                     module.gradient_checkpointing_enable()
 
-    def _to_device(self, device: int | str | torch.device) -> None:
-        """Move the model to ``device``, unless every tensor of it is already there.
+    def _align_modules_around_backbone(self, dtype: torch.dtype | None = None) -> None:
+        """Align auxiliary modules without changing loaded backbones or dispatched submodules."""
+        device = self.device
+        placed = set()
+        for module in self.modules():
+            if self._device_map is not None and isinstance(module, Transformer):
+                placed.update(id(child) for child in module.model.modules())
+            elif (self._device_map is not None and isinstance(module, PreTrainedModel)) or getattr(
+                module, "_hf_hook", None
+            ) is not None:
+                placed.update(id(child) for child in module.modules())
 
-        Moving a model that is already in place is a no-op for an ordinary tensor, but not for
-        every tensor: ``nn.Module._apply`` rebuilds each parameter, which fails for a torchao
-        quantized weight with ``_apply(): Couldn't swap Linear.weight``. ``torch.empty`` resolves
-        ``device`` the way a tensor reports it, so that e.g. ``"cuda"`` matches a ``cuda:0``
-        parameter rather than moving the model on every call.
-        """
+        def align(module: nn.Module) -> None:
+            for child in module.children():
+                if id(child) in placed:
+                    continue
+                if any(id(descendant) in placed for descendant in child.modules()):
+                    child._apply(
+                        lambda tensor: tensor.to(device=device, dtype=dtype if tensor.is_floating_point() else None),
+                        recurse=False,
+                    )
+                    align(child)
+                else:
+                    child.to(device=device, dtype=dtype)
+
+        align(self)
+
+    @torch.inference_mode(False)
+    def _resolve_encode_device(self, device: int | str | torch.device | None) -> torch.device:
+        """Resolve the input device and skip redundant or delegated model moves."""
+        if self._placement_is_delegated:
+            if device is not None:
+                override = (
+                    "Reload the model without dispatching it to place it yourself."
+                    if self._accelerate_placement_hook is not None
+                    else "Use `model.to(device)` to override it."
+                )
+                logger.warning_once(
+                    f"Ignoring `device={device}`, as a device map or Accelerate hooks control "
+                    f"this model's placement. {override}"
+                )
+            return self.device
+
+        if device is None:
+            device = self.device
+
+        # Tensor devices canonicalize aliases such as cpu:0 and an unindexed cuda device.
         target_device = torch.empty(0, device=device).device
         if any(tensor.device != target_device for tensor in chain(self.parameters(), self.buffers())):
             self.to(device)
+        return target_device
+
+    def to(self, *args: Any, **kwargs: Any) -> Self:
+        """Move and/or cast the parameters and buffers, as :meth:`torch.nn.Module.to` does.
+
+        The warning mirrors the one accelerate patches onto the backbone's own ``to``, which the
+        ``nn.Module._apply`` recursion under this call never reaches.
+        """
+        device = torch._C._nn._parse_to(*args, **kwargs)[0]
+        if device is not None and self._accelerate_placement_hook is not None:
+            logger.warning_once("You shouldn't move a model that is dispatched using accelerate hooks.")
+        result = super().to(*args, **kwargs)
+        if device is not None:
+            self._device_map = None
+        return result
+
+    def _apply(self, *args: Any, **kwargs: Any) -> Self:
+        """Apply a function to every parameter and buffer, as :meth:`torch.nn.Module._apply` does.
+
+        accelerate patches ``to`` and ``cuda`` on the backbone to refuse moves that would strand the
+        weights it offloaded, but ``nn.Module._apply`` recurses past those patches, and ``cpu()`` and
+        ``half()`` never reach them at all. Every mover funnels through here, so the guard lives here.
+        """
+        if self._accelerate_placement_hook is not None and any(
+            tensor.device.type == "meta" for tensor in chain(self.parameters(), self.buffers())
+        ):
+            raise RuntimeError("You can't move a model that has some modules offloaded to cpu or disk.")
+        return super()._apply(*args, **kwargs)
+
+    @property
+    def _accelerate_placement_hook(self) -> ModelHook | None:
+        """The first placement hook, including hooks on ordinary modules and inside SequentialHook."""
+
+        def find_hook(hook: ModelHook | None) -> ModelHook | None:
+            if getattr(hook, "execution_device", None) is not None:
+                return hook
+            for child in getattr(hook, "hooks", ()):
+                if (found := find_hook(child)) is not None:
+                    return found
+            return None
+
+        for module in self.modules():
+            hook = module.__dict__.get("_hf_hook")
+            if hook is not None and (placement_hook := find_hook(hook)) is not None:
+                return placement_hook
+        return None
+
+    @property
+    def _placement_is_delegated(self) -> bool:
+        """Whether a requested device map or live placement hooks control inference placement."""
+        return self._device_map is not None or self._accelerate_placement_hook is not None
 
     @property
     def device(self) -> torch.device:
@@ -1535,7 +1624,14 @@ This pull request has been automatically generated to add {self.__class__.__name
         Get torch.device from module, assuming that the whole module has one device.
         In case there are no PyTorch parameters, fall back to CPU.
         """
-        if (transformers_model := self.transformers_model) is not None and hasattr(transformers_model, "device"):
+        transformers_model = self.transformers_model
+
+        # An offloaded module keeps its parameters on ``meta`` until accelerate streams them in, so the
+        # first parameter is not where the model runs. accelerate resolved that when it dispatched.
+        if (execution_device := getattr(self._accelerate_placement_hook, "execution_device", None)) is not None:
+            return torch.device(execution_device)
+
+        if transformers_model is not None and hasattr(transformers_model, "device"):
             return transformers_model.device
 
         if len(self._modules) and hasattr(self[0], "auto_model") and hasattr(self[0].auto_model, "device"):
@@ -1544,6 +1640,8 @@ This pull request has been automatically generated to add {self.__class__.__name
         try:
             return next(self.parameters()).device
         except StopIteration:
+            if (buffer := next(self.buffers(), None)) is not None:
+                return buffer.device
             # Fallback for nn.DataParallel compatibility when parameters() is empty
 
             def find_tensor_attributes(module: nn.Module) -> list[tuple[str, Tensor]]:
@@ -1576,6 +1674,13 @@ This pull request has been automatically generated to add {self.__class__.__name
         Returns:
             Dict[str, Any]: A dictionary with the target processes, an input queue, and an output queue.
         """
+        if self._accelerate_placement_hook is not None:
+            raise ValueError(
+                "Multi-process encoding places the model on each target device itself, which a model "
+                "dispatched by accelerate does not allow. Load it without a `device_map` to encode "
+                "with a pool."
+            )
+
         if target_devices is None:
             if torch.cuda.is_available():
                 target_devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
@@ -1591,6 +1696,9 @@ This pull request has been automatically generated to add {self.__class__.__name
         # Note: this modifies the model in-place, the model will remain on CPU after this call.
         self.to("cpu")
         self.share_memory()
+        # This move overrides whatever a `device_map` asked for, so each worker may now place its own
+        # copy on its target device.
+        self._device_map = None
         ctx = mp.get_context("spawn")
         input_queue = ctx.Queue()
         output_queue = ctx.Queue()

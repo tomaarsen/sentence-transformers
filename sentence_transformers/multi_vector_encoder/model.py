@@ -760,7 +760,9 @@ class MultiVectorEncoder(BaseModel):
                 multiples on an accelerator. Set it for corpora too large to keep in device memory.
                 Multi-process encoding (a ``pool``, or a list of ``device``s) always returns on the CPU,
                 since embeddings are moved there to cross the process boundary.
-            device (str, torch.device, list, or None): Device(s) for computation. Defaults to None.
+            device (str, torch.device, list, or None): Device(s) for computation. A single device moves the
+                model there unless a `device_map` or Accelerate hooks control placement, a list uses multi-process encoding, and
+                None uses the model's current device. Defaults to None.
             normalize_embeddings (bool, optional): If True, L2-normalize each per-token embedding before
                 returning. Use this when the loaded pipeline does not include a :class:`Normalize` module
                 but you still want unit-norm vectors. No-op when a token-level ``Normalize`` already ran.
@@ -846,9 +848,7 @@ class MultiVectorEncoder(BaseModel):
 
         prompt = self._resolve_prompt(prompt, prompt_name)
 
-        if device is None:
-            device = self.device
-        self._to_device(device)
+        device = self._resolve_encode_device(device)
         self.eval()
 
         # Element type depends on output_value / convert flags: Tensor, ndarray, or feature dict.
