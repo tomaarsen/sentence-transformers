@@ -107,6 +107,12 @@ class TestSetTemporaryClassAttrs:
 
 
 class TestTransformerInit:
+    @pytest.mark.parametrize("use_cache", [None, False, True])
+    def test_use_cache_default_and_override(self, use_cache):
+        config_kwargs = {} if use_cache is None else {"use_cache": use_cache}
+        transformer = Transformer(TINY_BERT, config_kwargs=config_kwargs)
+        assert transformer.config.use_cache is (use_cache is True)
+
     def test_invalid_transformer_task(self):
         with pytest.raises(ValueError, match="Unsupported transformer_task"):
             Transformer(TINY_BERT, transformer_task="nonexistent-task")

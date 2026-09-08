@@ -698,7 +698,7 @@ class Transformer(InputModule):
         config_kwargs (dict[str, Any], optional): Keyword arguments forwarded to
             ``AutoConfig.from_pretrained`` when loading the config. See the `AutoConfig.from_pretrained
             <https://huggingface.co/docs/transformers/en/model_doc/auto#transformers.AutoConfig.from_pretrained>`_
-            documentation for more details. Defaults to None.
+            documentation for more details. Defaults to ``{"use_cache": False}``.
         processing_kwargs (dict[str, dict[str, Any]], optional): Keyword arguments applied when *calling*
             the processor during preprocessing. This is a nested dict whose keys are modality names
             (``"text"``, ``"audio"``, ``"image"``, ``"video"``), ``"common"`` for kwargs shared across all
@@ -806,8 +806,7 @@ class Transformer(InputModule):
             model_kwargs = {}
         if processor_kwargs is None:
             processor_kwargs = {}
-        if config_kwargs is None:
-            config_kwargs = {}
+        config_kwargs = {"use_cache": False, **(config_kwargs or {})}
 
         # A revision resolved for the model repository must not pin a separate processor repository
         processor_revision = processor_kwargs.get("revision")
