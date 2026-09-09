@@ -268,21 +268,27 @@ class TestTransformerInit:
 
 
 class TestUseCache:
-    @pytest.mark.parametrize(
-        ("model_type", "config_kwargs", "expected"),
-        [
-            ("qwen3", {}, False),
-            ("qwen3", {"use_cache": False}, False),
-            ("qwen3", {"use_cache": True}, True),
-            ("qwen3_vl", {}, False),
-            ("qwen3_vl", {"use_cache": False}, False),
-            ("qwen3_vl", {"use_cache": True}, True),
-            ("qwen3_vl", {"text_config": {"use_cache": True}}, True),
-            ("qwen3_vl", {"use_cache": True, "text_config": {"use_cache": False}}, False),
-            ("qwen3_vl", {"use_cache": False, "text_config": {"use_cache": True}}, True),
-        ],
+    @pytest.fixture(
+        params=[
+            pytest.param(("qwen3", {}, False), id="qwen3-default"),
+            pytest.param(("qwen3", {"use_cache": False}, False), id="qwen3-disabled"),
+            pytest.param(("qwen3", {"use_cache": True}, True), id="qwen3-enabled"),
+            pytest.param(("qwen3_vl", {}, False), id="qwen3-vl-default"),
+            pytest.param(("qwen3_vl", {"use_cache": False}, False), id="qwen3-vl-disabled"),
+            pytest.param(("qwen3_vl", {"use_cache": True}, True), id="qwen3-vl-enabled"),
+            pytest.param(("qwen3_vl", {"text_config": {"use_cache": True}}, True), id="qwen3-vl-text-enabled"),
+            pytest.param(
+                ("qwen3_vl", {"use_cache": True, "text_config": {"use_cache": False}}, False),
+                id="qwen3-vl-text-overrides-enabled",
+            ),
+            pytest.param(
+                ("qwen3_vl", {"use_cache": False, "text_config": {"use_cache": True}}, True),
+                id="qwen3-vl-text-overrides-disabled",
+            ),
+        ]
     )
-    def test_decoder_cache(self, tmp_path, monkeypatch, bert_tiny_transformer, model_type, config_kwargs, expected):
+    def decoder_cache_model(self, request, tmp_path, monkeypatch, bert_tiny_transformer):
+        model_type, config_kwargs, expected = request.param
         text_config = {
             "vocab_size": 32,
             "hidden_size": 32,
@@ -311,15 +317,26 @@ class TestUseCache:
         original_kwargs = deepcopy(config_kwargs)
 
         transformer = Transformer(str(tmp_path), config_kwargs=config_kwargs)
-        assert transformer.config.get_text_config().use_cache is expected
         assert config_kwargs == original_kwargs
+        return transformer, expected
+
+    def test_decoder_cache_config(self, decoder_cache_model):
+        transformer, expected = decoder_cache_model
+        assert transformer.config.get_text_config().use_cache is expected
+        if isinstance(transformer.config, Qwen3VLConfig):
+            assert not hasattr(transformer.config.vision_config, "use_cache")
+
+    @pytest.mark.skipif(
+        parse_version(torch.__version__) < Version("2.4"),
+        reason="Qwen rotary embeddings call torch.is_autocast_enabled(device_type), which requires torch>=2.4.",
+    )
+    def test_decoder_cache_forward(self, decoder_cache_model):
+        transformer, expected = decoder_cache_model
         with torch.no_grad():
             outputs = transformer.model(input_ids=torch.tensor([[1, 2, 3]]))
             uncached_outputs = transformer.model(input_ids=torch.tensor([[1, 2, 3]]), use_cache=False)
         assert (outputs.past_key_values is not None) is expected
         torch.testing.assert_close(outputs.last_hidden_state, uncached_outputs.last_hidden_state)
-        if model_type == "qwen3_vl":
-            assert not hasattr(transformer.config.vision_config, "use_cache")
 
     @pytest.mark.parametrize("use_cache", [False, True])
     def test_nested_audio_config(self, use_cache):
@@ -334,8 +351,8 @@ class TestUseCache:
         assert not hasattr(config.audio_config, "use_cache")
 
     def test_config_object_override(self):
-        text_config = Qwen3Config(use_cache=True)
-        config = Qwen3VLConfig(text_config=text_config)
+        config = Qwen3VLConfig(text_config={"use_cache": True})
+        text_config = config.text_config
         original_config = text_config.to_dict()
         Transformer._configure_use_cache(config, {"use_cache": False, "text_config": text_config})
         assert config.text_config.use_cache is True
