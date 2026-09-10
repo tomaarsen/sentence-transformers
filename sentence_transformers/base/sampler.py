@@ -6,7 +6,7 @@ import pickle
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterator
-from itertools import accumulate, cycle
+from itertools import accumulate
 from typing import Any
 
 import numpy as np
@@ -707,6 +707,12 @@ class MultiDatasetDefaultBatchSampler(SetEpochMixin, BatchSampler, ABC):
         self.generator = generator
         self.seed = seed
 
+    def set_epoch(self, epoch: int) -> None:
+        super().set_epoch(epoch)
+        for sampler in self.batch_samplers:
+            if hasattr(sampler, "set_epoch"):
+                sampler.set_epoch(epoch)
+
     @abstractmethod
     def __iter__(self) -> Iterator[list[int]]:
         """Yield batches from the underlying datasets in a specific order."""
@@ -739,15 +745,12 @@ class RoundRobinBatchSampler(MultiDatasetDefaultBatchSampler):
         sample_offsets = [0] + list(accumulate(num_samples))
 
         batch_samplers = [iter(sampler) for sampler in self.batch_samplers]
-        for dataset_idx in cycle(range(len(batch_samplers))):
-            sample_offset = sample_offsets[dataset_idx]
-            try:
-                yield [idx + sample_offset for idx in next(batch_samplers[dataset_idx])]
-            except StopIteration:
-                # current iterator is apparently exhausted
-                break
+        for batches in zip(*batch_samplers):
+            for sample_offset, batch in zip(sample_offsets, batches):
+                yield [idx + sample_offset for idx in batch]
 
     def __len__(self) -> int:
+        """Return the number of batches, estimated when child sampler lengths are estimates."""
         return min(len(sampler) for sampler in self.batch_samplers) * len(self.batch_samplers)
 
 
