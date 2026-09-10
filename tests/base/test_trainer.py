@@ -220,6 +220,7 @@ def _run_ddp_evaluation_loop(rank: int, world_size: int, port: int, tmp_dir: str
     from datasets import Dataset
 
     from sentence_transformers.base.evaluation import BaseEvaluator
+    from sentence_transformers.sentence_transformer.evaluation import EmbeddingSimilarityEvaluator
     from sentence_transformers.sentence_transformer.modules import Pooling, WordEmbeddings
     from sentence_transformers.sentence_transformer.modules.tokenizer import WhitespaceTokenizer
 
@@ -229,6 +230,13 @@ def _run_ddp_evaluation_loop(rank: int, world_size: int, port: int, tmp_dir: str
         embedding_weights=torch.rand(len(vocab), 16, generator=torch.Generator().manual_seed(12)),
     )
     model = SentenceTransformer(modules=[word_embeddings, Pooling(16, "mean")])
+    similarity_evaluator = EmbeddingSimilarityEvaluator(
+        ["hello", "world", "hello world", "sentence", "transformers"],
+        ["world", "hello world", "hello", "transformers", "sentence transformers"],
+        [0.1, 0.8, 0.7, 0.2, 0.9],
+        show_progress_bar=False,
+    )
+    expected_metrics = similarity_evaluator(model)
 
     class RankRecordingEvaluator(BaseEvaluator):
         def __init__(self):
@@ -237,9 +245,9 @@ def _run_ddp_evaluation_loop(rank: int, world_size: int, port: int, tmp_dir: str
 
         def __call__(self, model, output_path=None, epoch=-1, steps=-1):
             (Path(tmp_dir) / f"called_rank_{rank}").touch()
-            # Stand-in for the real bug: under a DistributedSampler shard, each rank's own
-            # evaluator run would compute a different score for the same eval step.
-            return {"score": float(rank)}
+            metrics = similarity_evaluator(model, output_path=output_path, epoch=epoch, steps=steps)
+            assert metrics == pytest.approx(expected_metrics)
+            return {**metrics, "score": float(rank)}
 
     args = SentenceTransformerTrainingArguments(output_dir=os.path.join(tmp_dir, f"out_{rank}"), use_cpu=True)
     trainer = SentenceTransformerTrainer(model=model, args=args, evaluator=RankRecordingEvaluator())
@@ -247,13 +255,14 @@ def _run_ddp_evaluation_loop(rank: int, world_size: int, port: int, tmp_dir: str
         {"sentence1": ["hello world"] * 4, "sentence2": ["sentence transformers"] * 4, "score": [0.5] * 4}
     )
     metrics = trainer.evaluate(eval_dataset=eval_dataset)
+    for key, expected in expected_metrics.items():
+        assert metrics[f"eval_{key}"] == pytest.approx(expected)
     (Path(tmp_dir) / f"metrics_rank_{rank}.json").write_text(json.dumps(metrics["eval_score"]))
+    torch.distributed.destroy_process_group()
 
 
 def test_evaluator_runs_once_and_broadcasts_under_ddp(tmp_path: Path) -> None:
-    """Under DDP every rank used to call the evaluator against its own DistributedSampler shard
-    (#3556), so a metric could come out different per rank. Only the world's main process should
-    run the evaluator; every other rank must get its exact result back, not compute its own."""
+    """Share evaluator inference across ranks and broadcast the full-dataset metrics."""
     world_size = 2
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -266,3 +275,6 @@ def test_evaluator_runs_once_and_broadcasts_under_ddp(tmp_path: Path) -> None:
 
     scores = {p.name: json.loads(p.read_text()) for p in sorted(tmp_path.glob("metrics_rank_*.json"))}
     assert scores == {"metrics_rank_0.json": 0.0, "metrics_rank_1.json": 0.0}
+    csv_files = list(tmp_path.glob("out_*/eval/*_results.csv"))
+    assert len(csv_files) == 1
+    assert len(csv_files[0].read_text().splitlines()) == 2
