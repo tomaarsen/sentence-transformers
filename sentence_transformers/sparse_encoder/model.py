@@ -735,8 +735,7 @@ class SparseEncoder(BaseModel):
             return embeddings
 
         prompt = self._resolve_prompt(prompt, prompt_name)
-
-        device = self._resolve_encode_device(device)
+        device = self._resolve_inference_device(device)
         self.eval()
 
         max_active_dims = max_active_dims if max_active_dims is not None else self.max_active_dims

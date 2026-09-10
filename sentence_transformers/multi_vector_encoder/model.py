@@ -847,8 +847,7 @@ class MultiVectorEncoder(BaseModel):
             return embeddings
 
         prompt = self._resolve_prompt(prompt, prompt_name)
-
-        device = self._resolve_encode_device(device)
+        device = self._resolve_inference_device(device)
         self.eval()
 
         # Element type depends on output_value / convert flags: Tensor, ndarray, or feature dict.

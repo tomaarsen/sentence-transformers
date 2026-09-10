@@ -694,8 +694,7 @@ class CrossEncoder(BaseModel, FitMixin):
             return pred_scores
 
         prompt = self._resolve_prompt(prompt, prompt_name)
-
-        device = self._resolve_encode_device(device)
+        device = self._resolve_inference_device(device)
 
         self.eval()
         activation_fn = activation_fn or self.activation_fn

@@ -197,16 +197,14 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
 
         # A `device_map` in `model_kwargs` makes accelerate control placement (not `device`), so we detect it
         # here to skip the `self.to(device)` below that would otherwise pull a `device_map="cuda:1"` model to cuda:0.
-        device_map = (model_kwargs or {}).get("device_map") if (backend == "torch" and model_name_or_path) else None
-        device_provided = device is not None
+        device_map = None
+        if backend == "torch" and model_name_or_path and model_kwargs:
+            device_map = model_kwargs.get("device_map")
         if device is None and device_map is None:
             device = get_device_name()
             logger.info(f"No device provided, using {device}")
-        elif device_provided and device_map is not None:
-            logger.warning(
-                "Both `device` and `model_kwargs['device_map']` were provided. `device_map` controls "
-                "device placement, so the `device` argument is ignored."
-            )
+        elif device is not None and device_map is not None:
+            logger.warning(f"Ignoring `device={device}` because `model_kwargs['device_map']` takes priority.")
 
         if device == "hpu" and importlib.util.find_spec("optimum") is not None:
             from optimum.habana.transformers.modeling_utils import adapt_transformers_to_gaudi
@@ -1516,40 +1514,50 @@ This pull request has been automatically generated to add {self.__class__.__name
                 except TypeError:
                     module.gradient_checkpointing_enable()
 
-    def _align_modules_around_backbone(self, dtype: torch.dtype | None = None) -> None:
-        """Align auxiliary modules without changing loaded backbones or dispatched submodules."""
+    def _align_modules_around_backbone(self, dtype: torch.dtype | None = None) -> torch.device:
+        """Align auxiliary modules without changing loaded backbones or dispatched submodules. Return the device."""
         device = self.device
         placed = set()
-        for module in self.modules():
+
+        def collect_placed(module: nn.Module) -> None:
             if self._device_map is not None and isinstance(module, Transformer):
                 placed.update(id(child) for child in module.model.modules())
             elif (self._device_map is not None and isinstance(module, PreTrainedModel)) or getattr(
                 module, "_hf_hook", None
             ) is not None:
                 placed.update(id(child) for child in module.modules())
+                return
+            for child in module.children():
+                if id(child) not in placed:
+                    collect_placed(child)
+
+        collect_placed(self)
+
+        def convert(tensor: Tensor) -> Tensor:
+            return tensor.to(device=device, dtype=dtype if tensor.is_floating_point() or tensor.is_complex() else None)
 
         def align(module: nn.Module) -> None:
             for child in module.children():
                 if id(child) in placed:
                     continue
                 if any(id(descendant) in placed for descendant in child.modules()):
-                    child._apply(
-                        lambda tensor: tensor.to(device=device, dtype=dtype if tensor.is_floating_point() else None),
-                        recurse=False,
-                    )
+                    child._apply(convert, recurse=False)
                     align(child)
                 else:
                     child.to(device=device, dtype=dtype)
 
+        if id(self) not in placed:
+            super()._apply(convert, recurse=False)
         align(self)
+        return device
 
     @torch.inference_mode(False)
-    def _resolve_encode_device(self, device: int | str | torch.device | None) -> torch.device:
+    def _resolve_inference_device(self, device: int | str | torch.device | None) -> torch.device:
         """Resolve the input device and skip redundant or delegated model moves."""
         if self._placement_is_delegated:
             if device is not None:
                 override = (
-                    "Reload the model without dispatching it to place it yourself."
+                    "To choose the device yourself, reload the model without a `device_map` or Accelerate hooks."
                     if self._accelerate_placement_hook is not None
                     else "Use `model.to(device)` to override it."
                 )
@@ -1557,13 +1565,14 @@ This pull request has been automatically generated to add {self.__class__.__name
                     f"Ignoring `device={device}`, as a device map or Accelerate hooks control "
                     f"this model's placement. {override}"
                 )
-            return self.device
+            return self._align_modules_around_backbone()
 
         if device is None:
             device = self.device
-
-        # Tensor devices canonicalize aliases such as cpu:0 and an unindexed cuda device.
-        target_device = torch.empty(0, device=device).device
+            target_device = device
+        else:
+            # Tensor devices canonicalize aliases such as cpu:0 and an unindexed cuda device.
+            target_device = torch.empty(0, device=device).device
         if any(tensor.device != target_device for tensor in chain(self.parameters(), self.buffers())):
             self.to(device)
         return target_device
@@ -1580,6 +1589,18 @@ This pull request has been automatically generated to add {self.__class__.__name
         result = super().to(*args, **kwargs)
         if device is not None:
             self._device_map = None
+        return result
+
+    def cpu(self) -> Self:
+        """Move the model to the CPU and override its saved device map."""
+        result = super().cpu()
+        self._device_map = None
+        return result
+
+    def cuda(self, device: int | torch.device | None = None) -> Self:
+        """Move the model to a CUDA device and override its saved device map."""
+        result = super().cuda(device=device)
+        self._device_map = None
         return result
 
     def _apply(self, *args: Any, **kwargs: Any) -> Self:
@@ -1620,40 +1641,28 @@ This pull request has been automatically generated to add {self.__class__.__name
 
     @property
     def device(self) -> torch.device:
-        """
-        Get torch.device from module, assuming that the whole module has one device.
-        In case there are no PyTorch parameters, fall back to CPU.
-        """
-        transformers_model = self.transformers_model
-
+        """Return the execution device, falling back to model tensors and then CPU."""
         # An offloaded module keeps its parameters on ``meta`` until accelerate streams them in, so the
         # first parameter is not where the model runs. accelerate resolved that when it dispatched.
         if (execution_device := getattr(self._accelerate_placement_hook, "execution_device", None)) is not None:
             return torch.device(execution_device)
 
-        if transformers_model is not None and hasattr(transformers_model, "device"):
-            return transformers_model.device
+        transformers_model = self.transformers_model
+        if (device := getattr(transformers_model, "device", None)) is not None:
+            return device
 
-        if len(self._modules) and hasattr(self[0], "auto_model") and hasattr(self[0].auto_model, "device"):
-            return self[0].auto_model.device
+        if (parameter := next(self.parameters(), None)) is not None:
+            return parameter.device
+        if (buffer := next(self.buffers(), None)) is not None:
+            return buffer.device
 
-        try:
-            return next(self.parameters()).device
-        except StopIteration:
-            if (buffer := next(self.buffers(), None)) is not None:
-                return buffer.device
-            # Fallback for nn.DataParallel compatibility when parameters() is empty
+        # DataParallel replicas store their weights as ordinary tensor attributes.
+        for module in self.modules():
+            for value in vars(module).values():
+                if torch.is_tensor(value):
+                    return value.device
 
-            def find_tensor_attributes(module: nn.Module) -> list[tuple[str, Tensor]]:
-                tuples = [(k, v) for k, v in module.__dict__.items() if torch.is_tensor(v)]
-                return tuples
-
-            gen = self._named_members(get_members_fn=find_tensor_attributes)
-            try:
-                first_tuple = next(gen)
-                return first_tuple[1].device
-            except StopIteration:
-                return torch.device("cpu")
+        return torch.device("cpu")
 
     def start_multi_process_pool(
         self, target_devices: list[str] | None = None

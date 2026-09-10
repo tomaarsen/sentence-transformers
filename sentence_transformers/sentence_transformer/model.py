@@ -914,8 +914,7 @@ class SentenceTransformer(BaseModel, FitMixin):
             return embeddings
 
         prompt = self._resolve_prompt(prompt, prompt_name)
-
-        device = self._resolve_encode_device(device)
+        device = self._resolve_inference_device(device)
         self.eval()
 
         truncate_dim = truncate_dim if truncate_dim is not None else self.truncate_dim
