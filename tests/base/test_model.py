@@ -1257,7 +1257,9 @@ def test_device_move_does_not_turn_parameters_into_inference_tensors() -> None:
     assert all(not parameter.is_inference() for parameter in model.parameters())
 
 
-def test_parameterless_model_uses_requested_input_device() -> None:
+@pytest.mark.parametrize("inputs", [["hello"], []])
+@pytest.mark.parametrize("model_class", [SentenceTransformer, SparseEncoder])
+def test_parameterless_model_uses_requested_input_device(inputs: list[str], model_class: type) -> None:
     class InputEmbedding(Module):
         def preprocess(self, inputs: list[str], **kwargs) -> dict[str, Tensor]:
             return {"sentence_embedding": torch.ones(len(inputs), 3)}
@@ -1268,10 +1270,18 @@ def test_parameterless_model_uses_requested_input_device() -> None:
         def save(self, output_path: str, **kwargs) -> None:
             pass
 
-    model = SentenceTransformer(modules=[InputEmbedding()], device="cpu")
-    embeddings = model.encode(["hello"], device="meta", convert_to_tensor=True)
+    model = model_class(modules=[InputEmbedding()], device="cpu")
+    kwargs = {"convert_to_sparse_tensor": False} if model_class is SparseEncoder else {}
+    embeddings = model.encode(inputs, device="meta", convert_to_tensor=True, **kwargs)
     assert embeddings.device == torch.device("meta")
-    assert embeddings.shape == (1, 3)
+    assert embeddings.shape == ((1, 3) if inputs else (0,))
+
+
+def test_parameterless_cross_encoder_uses_requested_device_for_empty_predictions() -> None:
+    model = CrossEncoder(modules=[nn.Identity()], device="cpu")
+    scores = model.predict([], device="meta", convert_to_tensor=True)
+    assert scores.device == torch.device("meta")
+    assert scores.shape == (0,)
 
 
 @pytest.mark.parametrize(["model_fixture", "encode_method", "inputs"], ENCODE_MODELS[:4], ids=ENCODE_MODEL_IDS[:4])
