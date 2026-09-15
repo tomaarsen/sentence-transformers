@@ -863,7 +863,7 @@ class MultiVectorEncoder(BaseModel):
         task: str | None,
         device: str | torch.device | None = None,
         **kwargs,
-    ) -> list[Tensor] | list[dict[str, Tensor]]:
+    ) -> list[Tensor] | list[dict[str, Any]]:
         """Run local inference on normalized inputs with resolved arguments."""
         is_query = task == "query"
 

@@ -597,7 +597,7 @@ class CrossEncoder(BaseModel, FitMixin):
         apply_softmax: bool | None,
         device: str | torch.device | None = None,
         **kwargs,
-    ) -> list[torch.Tensor] | torch.Tensor:
+    ) -> torch.Tensor:
         """Run local inference on normalized inputs with resolved arguments."""
         device = self._resolve_inference_device(device)
 
@@ -635,10 +635,7 @@ class CrossEncoder(BaseModel, FitMixin):
 
         pred_scores = [pred_scores[idx] for idx in np.argsort(length_sorted_idx)]
 
-        if pred_scores:
-            return torch.stack(pred_scores)
-
-        return pred_scores
+        return torch.stack(pred_scores) if pred_scores else torch.tensor([], device=device)
 
     @cross_encoder_predict_rank_args_decorator
     def rank(

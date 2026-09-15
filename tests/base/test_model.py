@@ -1277,6 +1277,13 @@ def test_parameterless_model_uses_requested_input_device(inputs: list[str], mode
     assert embeddings.shape == ((1, 3) if inputs else (0,))
 
 
+def test_parameterless_cross_encoder_uses_requested_device_for_empty_predictions() -> None:
+    model = CrossEncoder(modules=[nn.Identity()], device="cpu")
+    scores = model.predict([], device="meta", convert_to_tensor=True)
+    assert scores.device == torch.device("meta")
+    assert scores.shape == (0,)
+
+
 @pytest.mark.parametrize(["model_fixture", "encode_method", "inputs"], ENCODE_MODELS[:4], ids=ENCODE_MODEL_IDS[:4])
 @pytest.mark.parametrize("execution_device", PLACEMENT_DEVICES)
 @pytest.mark.parametrize("offload", ["cpu", "disk"])

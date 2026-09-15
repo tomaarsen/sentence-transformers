@@ -755,7 +755,7 @@ class SparseEncoder(BaseModel):
         max_active_dims: int | None,
         device: str | torch.device | None = None,
         **kwargs,
-    ) -> list[Tensor] | Tensor:
+    ) -> Tensor:
         """Run local inference on normalized inputs with resolved arguments."""
         device = self._resolve_inference_device(device)
         self.eval()

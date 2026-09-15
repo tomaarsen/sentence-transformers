@@ -931,7 +931,7 @@ class SentenceTransformer(BaseModel, FitMixin):
         truncate_dim: int | None,
         device: str | torch.device | None = None,
         **kwargs,
-    ) -> list[Tensor] | Tensor | list[dict[str, Tensor]]:
+    ) -> list[Tensor] | Tensor | list[dict[str, Any]]:
         """Run local inference on normalized inputs with resolved arguments."""
         if self.device.type == "hpu" and not self.is_hpu_graph_enabled:
             import habana_frameworks.torch as ht
