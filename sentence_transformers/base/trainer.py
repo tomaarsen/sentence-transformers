@@ -667,9 +667,11 @@ class BaseTrainer(Trainer, ABC):
             else:
                 return output
 
-        with distributed_evaluation(self.model, enabled=not self.is_fsdp_enabled and not self.is_deepspeed_enabled):
-            if self.is_world_process_zero():
-                output_path = self.args.output_dir
+        with distributed_evaluation(
+            self.model, enabled=not self.is_fsdp_enabled and not self.is_deepspeed_enabled
+        ) as run_evaluator:
+            if run_evaluator:
+                output_path = self.args.output_dir if self.is_world_process_zero() else None
                 if output_path is not None:
                     output_path = os.path.join(output_path, "eval")
                     os.makedirs(output_path, exist_ok=True)

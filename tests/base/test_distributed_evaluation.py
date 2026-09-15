@@ -131,8 +131,9 @@ def _run_distributed_inference(rank, world_size, port, model_type, use_cuda):
             inference = getattr(model, name)
             expected = inference(values, show_progress_bar=False, **kwargs)
             model[0].seen.clear()
-            with distributed_evaluation(model):
-                if rank == 0:
+            with distributed_evaluation(model) as run_evaluator:
+                assert run_evaluator is (rank == 0)
+                if run_evaluator:
                     actual = inference(values, show_progress_bar=False, **kwargs)
                     _assert_output_equal(actual, expected)
             assert model._distributed_inference is None
@@ -149,8 +150,8 @@ def _run_distributed_inference(rank, world_size, port, model_type, use_cuda):
         if model_type == "dense":
             for failing_inputs in (["cat", "fail"], ["fail"] * world_size):
                 with pytest.raises(RuntimeError, match="worker inference failed") as exc_info:
-                    with distributed_evaluation(model):
-                        if rank == 0:
+                    with distributed_evaluation(model) as run_evaluator:
+                        if run_evaluator:
                             model.encode(failing_inputs)
                 for failed_rank, text in enumerate(failing_inputs):
                     if text == "fail":
@@ -159,11 +160,11 @@ def _run_distributed_inference(rank, world_size, port, model_type, use_cuda):
                 assert "raise ValueError" in str(exc_info.value)
                 assert model._distributed_inference is None
             with pytest.raises((ValueError, RuntimeError), match="metric failed"):
-                with distributed_evaluation(model):
-                    if rank == 0:
+                with distributed_evaluation(model) as run_evaluator:
+                    if run_evaluator:
                         raise ValueError("metric failed")
-            with distributed_evaluation(model):
-                if rank == 0:
+            with distributed_evaluation(model) as run_evaluator:
+                if run_evaluator:
                     assert model.encode(["cat", "dog"]).shape == (2, 16)
 
         model.to(device)
@@ -191,8 +192,8 @@ def _run_distributed_inference(rank, world_size, port, model_type, use_cuda):
                 if rank == 0:
                     expected = getattr(model, method)(inputs, show_progress_bar=False, **kwargs)
                 model[0].seen.clear()
-                with distributed_evaluation(model):
-                    if rank == 0:
+                with distributed_evaluation(model) as run_evaluator:
+                    if run_evaluator:
                         actual = getattr(model, method)(inputs, show_progress_bar=False, **kwargs)
                         _assert_output_equal(actual, expected)
                 shards = [None] * world_size
@@ -200,6 +201,14 @@ def _run_distributed_inference(rank, world_size, port, model_type, use_cuda):
                 assert all(shards)
     finally:
         dist.destroy_process_group()
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_distributed_evaluation_without_process_group(enabled):
+    model = _make_model("dense")
+    with distributed_evaluation(model, enabled=enabled) as run_evaluator:
+        assert run_evaluator is True
+        assert model._distributed_inference is None
 
 
 @pytest.mark.parametrize("model_type", ["dense", "sparse", "multi_vector", "cross_encoder"])

@@ -209,7 +209,9 @@ def test_track_loss_components_detaches_the_accumulated_values() -> None:
     assert accumulated.item() == pytest.approx(12.0)
 
 
-def _run_ddp_evaluation_loop(rank: int, world_size: int, port: int, tmp_dir: str) -> None:
+def _run_ddp_evaluation_loop(
+    rank: int, world_size: int, port: int, tmp_dir: str, sharded_backend: str | None = None
+) -> None:
     os.environ["RANK"] = str(rank)
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["LOCAL_RANK"] = str(rank)
@@ -244,6 +246,12 @@ def _run_ddp_evaluation_loop(rank: int, world_size: int, port: int, tmp_dir: str
             self.primary_metric = "score"
 
         def __call__(self, model, output_path=None, epoch=-1, steps=-1):
+            if sharded_backend is not None:
+                assert model._distributed_inference is None
+                assert (output_path is not None) == (rank == 0)
+                participants = torch.tensor(1)
+                torch.distributed.all_reduce(participants)
+                assert participants.item() == world_size
             (Path(tmp_dir) / f"called_rank_{rank}").touch()
             metrics = similarity_evaluator(model, output_path=output_path, epoch=epoch, steps=steps)
             assert metrics == pytest.approx(expected_metrics)
@@ -256,7 +264,12 @@ def _run_ddp_evaluation_loop(rank: int, world_size: int, port: int, tmp_dir: str
     eval_dataset = Dataset.from_dict(
         {"sentence1": ["hello world"] * 4, "sentence2": ["sentence transformers"] * 4, "score": [0.5] * 4}
     )
-    metrics = trainer.evaluate(eval_dataset=eval_dataset)
+    if sharded_backend is None:
+        metrics = trainer.evaluate(eval_dataset=eval_dataset)
+    else:
+        setattr(trainer, f"is_{sharded_backend}_enabled", True)
+        with patch("transformers.Trainer.evaluation_loop", return_value=SimpleNamespace(metrics={})):
+            metrics = trainer.evaluation_loop(dataloader=None, description="Evaluation").metrics
     for key, expected in expected_metrics.items():
         assert metrics[f"eval_{key}"] == pytest.approx(expected)
     (Path(tmp_dir) / f"metrics_rank_{rank}.json").write_text(json.dumps(metrics["eval_score"]))
@@ -277,6 +290,23 @@ def test_evaluator_runs_once_and_broadcasts_under_ddp(tmp_path: Path) -> None:
 
     scores = {p.name: json.loads(p.read_text()) for p in sorted(tmp_path.glob("metrics_rank_*.json"))}
     assert scores == {"metrics_rank_0.json": 0.0, "metrics_rank_1.json": 0.0}
+    csv_files = list(tmp_path.glob("out_*/eval/*_results.csv"))
+    assert len(csv_files) == 1
+    assert len(csv_files[0].read_text().splitlines()) == 2
+
+
+@pytest.mark.parametrize("sharded_backend", ["fsdp", "deepspeed"])
+def test_sharded_evaluator_participates_on_all_ranks(tmp_path: Path, sharded_backend: str) -> None:
+    """Exercise backend routing with a collective evaluator on two CPU ranks."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    mp.spawn(_run_ddp_evaluation_loop, args=(2, port, str(tmp_path), sharded_backend), nprocs=2, join=True)
+
+    assert sorted(path.name for path in tmp_path.glob("called_rank_*")) == ["called_rank_0", "called_rank_1"]
+    scores = [json.loads(path.read_text()) for path in sorted(tmp_path.glob("metrics_rank_*.json"))]
+    assert scores == [0.0, 0.0]
     csv_files = list(tmp_path.glob("out_*/eval/*_results.csv"))
     assert len(csv_files) == 1
     assert len(csv_files[0].read_text().splitlines()) == 2

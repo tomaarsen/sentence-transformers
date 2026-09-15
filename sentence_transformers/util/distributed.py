@@ -3,7 +3,7 @@ from __future__ import annotations
 import pickle
 import traceback
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -11,6 +11,7 @@ import torch.distributed as dist
 from transformers.utils import logging
 
 from .environment import is_dist_initialized
+from .misc import disable_logging
 from .tensor import _move_tensors_to_cpu, _move_tensors_to_device
 
 if TYPE_CHECKING:
@@ -192,26 +193,31 @@ class _DistributedInference:
 
 
 @contextmanager
-def distributed_evaluation(model: BaseModel, enabled: bool = True) -> Iterator[None]:
-    """Share evaluator inference across existing DDP ranks while rank zero computes the metrics."""
-    if not enabled or get_world_size() == 1:
-        yield
-        return
+def distributed_evaluation(model: BaseModel, enabled: bool = True) -> Iterator[bool]:
+    """Share DDP inference and yield whether this rank should run the evaluator.
 
-    inference = _DistributedInference(model)
-    if get_rank() != 0:
-        inference.serve()
-        yield
-        return
+    When disabled, every rank runs the evaluator. Nonzero ranks suppress logs below WARNING.
+    """
+    is_main_process = get_rank() == 0
+    with nullcontext() if is_main_process else disable_logging(logging.INFO):
+        if not enabled or get_world_size() == 1:
+            yield True
+            return
 
-    previous = model._distributed_inference
-    model._distributed_inference = inference
-    error = None
-    try:
-        yield
-    except BaseException:
-        error = traceback.format_exc()
-        raise
-    finally:
-        model._distributed_inference = previous
-        inference.stop(error)
+        inference = _DistributedInference(model)
+        if not is_main_process:
+            inference.serve()
+            yield False
+            return
+
+        previous = model._distributed_inference
+        model._distributed_inference = inference
+        error = None
+        try:
+            yield True
+        except BaseException:
+            error = traceback.format_exc()
+            raise
+        finally:
+            model._distributed_inference = previous
+            inference.stop(error)
