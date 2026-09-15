@@ -229,7 +229,7 @@ def splade_bert_tiny_model(_splade_bert_tiny_model: SparseEncoder) -> SparseEnco
 # Multi Vector Encoders
 @pytest.fixture(scope="session")
 def _mve_bert_tiny_model() -> MultiVectorEncoder:
-    model_id = "sentence-transformers-testing/stsb-bert-tiny-safetensors"
+    model_id = "multi-vector-encoder-testing/bert-tiny-multi-vector"
     model = MultiVectorEncoder(model_id)
     model.model_card_data.generate_widget_examples = False  # Disable widget examples generation for testing
     return model
