@@ -450,13 +450,14 @@ class BaseTrainer(Trainer, ABC):
         else:
             loss = loss(model).to(model.device)
 
-        # Enable per-sample media counting in Transformer.preprocess for losses that minibatch VLM
-        # inputs. The loss may be wrapped (e.g. MatryoshkaLoss), so look through its submodules.
+        # Enable media counting for VLM minibatching, checking submodules for wrapped losses (e.g. MatryoshkaLoss).
+        # Unwrap torch.compile models before indexing, as OptimizedModule isn't subscriptable.
         if any(getattr(module, "requires_media_counts", False) for module in loss.modules()):
-            if isinstance(model[0], Router):
-                input_modules = [route[0] for route in model[0].sub_modules.values()]  # type: ignore[index]
+            base_model = getattr(model, "_orig_mod", model)
+            if isinstance(base_model[0], Router):
+                input_modules = [route[0] for route in base_model[0].sub_modules.values()]  # type: ignore[index]
             else:
-                input_modules = [model[0]]
+                input_modules = [base_model[0]]
             for module in input_modules:
                 if hasattr(module, "track_media_counts"):
                     module.track_media_counts = True
