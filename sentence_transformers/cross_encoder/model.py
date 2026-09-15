@@ -167,8 +167,8 @@ class CrossEncoder(BaseModel, FitMixin):
         max_length: int | None = None,
         activation_fn: Callable | None = None,
     ) -> None:
-        # Set before super().__init__() so _parse_model_config can check these
-        self.activation_fn = None
+        # Preserve an explicit activation before parsing the saved configuration.
+        self.activation_fn = activation_fn
 
         if num_labels is not None:
             if config_kwargs is None:
@@ -199,11 +199,7 @@ class CrossEncoder(BaseModel, FitMixin):
         )
         self.model_card_data: CrossEncoderModelCardData
 
-        # If an activation function is provided, use it. Otherwise, load the default one/from backwards compatibility
-        # if it wasn't set during super().__init__()
-        if activation_fn is not None:
-            self.activation_fn = activation_fn
-        elif self.activation_fn is None:
+        if self.activation_fn is None:
             self.activation_fn = self.get_default_activation_fn()
 
     def _load_default_modules(
@@ -492,8 +488,9 @@ class CrossEncoder(BaseModel, FitMixin):
             convert_to_tensor (bool, optional): Whether the output should be one large tensor. Overwrites `convert_to_numpy`.
                 Defaults to False.
             device (Union[str, List[str]], optional): Device(s) to use for computation. Can be a single device string
-                (e.g., "cuda:0", "cpu") or a list of devices (e.g., ["cuda:0", "cuda:1"]). If a list is provided,
-                multiprocessing will be used automatically. Defaults to None.
+                (e.g., "cuda:0", "cpu"), which moves the model there unless a `device_map` or Accelerate hooks control placement,
+                or a list of devices (e.g., ["cuda:0", "cuda:1"]), which uses multiprocessing automatically.
+                If None, uses the model's current device. Defaults to None.
             pool (Dict[str, Any], optional): A pool of workers created with :meth:`start_multi_process_pool`. If provided,
                 multiprocessing will be used. If None and ``device`` is a list, a pool will be created automatically.
                 Defaults to None.
@@ -554,7 +551,8 @@ class CrossEncoder(BaseModel, FitMixin):
             inputs = materialized
 
         prompt = self._resolve_prompt(prompt, prompt_name)
-        activation_fn = activation_fn or self.activation_fn
+        if activation_fn is None:
+            activation_fn = self.activation_fn
 
         inference_kwargs = dict(
             prompt=prompt,
@@ -601,11 +599,7 @@ class CrossEncoder(BaseModel, FitMixin):
         **kwargs,
     ) -> list[torch.Tensor] | torch.Tensor:
         """Run local inference on normalized inputs with resolved arguments."""
-        # Here, device is either a single device string (e.g., "cuda:0", "cpu") for single-process encoding or None
-        if device is None:
-            device = str(self.device)
-
-        self.to(device)
+        device = self._resolve_inference_device(device)
 
         self.eval()
         num_labels = self.num_labels
@@ -684,8 +678,9 @@ class CrossEncoder(BaseModel, FitMixin):
             activation_fn ([type], optional): Activation function applied on the logits output of the CrossEncoder. If None, nn.Sigmoid() will be used if num_labels=1, else nn.Identity. Defaults to None.
             apply_softmax (bool, optional): If there are more than 2 dimensions and apply_softmax=True, applies softmax on the logits output. Defaults to False.
             device (Union[str, List[str]], optional): Device(s) to use for computation. Can be a single device string
-                (e.g., "cuda:0", "cpu") or a list of devices (e.g., ["cuda:0", "cuda:1"]). If a list is provided,
-                multiprocessing will be used automatically. Defaults to None.
+                (e.g., "cuda:0", "cpu"), which moves the model there unless a `device_map` or Accelerate hooks control placement,
+                or a list of devices (e.g., ["cuda:0", "cuda:1"]), which uses multiprocessing automatically.
+                If None, uses the model's current device. Defaults to None.
             pool (Dict[str, Any], optional): A pool of workers created with :meth:`start_multi_process_pool`. If provided,
                 multiprocessing will be used. If None and ``device`` is a list, a pool will be created automatically.
                 Defaults to None.
@@ -798,7 +793,7 @@ class CrossEncoder(BaseModel, FitMixin):
 
     def _parse_model_config(self, model_config: dict[str, Any]) -> None:
         super()._parse_model_config(model_config)
-        if "activation_fn" in model_config:
+        if self.activation_fn is None and "activation_fn" in model_config:
             activation_fn_path = model_config["activation_fn"]
             if activation_fn_path is not None:
                 resolved = self._resolve_activation_fn(activation_fn_path)

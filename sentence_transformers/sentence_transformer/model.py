@@ -809,9 +809,10 @@ class SentenceTransformer(BaseModel, FitMixin):
                 - A single device string (e.g., "cuda:0", "cpu") for single-process encoding
                 - A list of device strings (e.g., ["cuda:0", "cuda:1"], ["cpu", "cpu", "cpu", "cpu"]) to distribute
                   encoding across multiple processes
-                - None to auto-detect available device for single-process encoding
+                - None to use the model's current device
 
-                If a list is provided, multi-process encoding will be used. Defaults to None.
+                A single device moves the model there, unless a `device_map` or Accelerate hooks control placement. If a list is
+                provided, multi-process encoding will be used. Defaults to None.
             normalize_embeddings (bool, optional): Whether to normalize returned vectors to have length 1.
             truncate_dim (int, optional): The dimension to truncate sentence embeddings to.
             pool (Dict[Literal["input", "output", "processes"], Any], optional): A pool created by
@@ -895,7 +896,7 @@ class SentenceTransformer(BaseModel, FitMixin):
             all_embeddings = quantize_embeddings(all_embeddings, precision=precision)
 
         if convert_to_tensor:
-            if len(all_embeddings):
+            if isinstance(all_embeddings, Tensor) or len(all_embeddings):
                 all_embeddings = torch.as_tensor(all_embeddings)
             else:
                 all_embeddings = torch.tensor([], device="cpu" if use_multi_process else self.device)
@@ -939,10 +940,7 @@ class SentenceTransformer(BaseModel, FitMixin):
                 ht.hpu.wrap_in_hpu_graph(self, disable_tensor_cache=True)
                 self.is_hpu_graph_enabled = True
 
-        # Set device
-        if device is None:
-            device = self.device
-        self.to(device)
+        device = self._resolve_inference_device(device)
         self.eval()
 
         all_embeddings = []
@@ -951,7 +949,7 @@ class SentenceTransformer(BaseModel, FitMixin):
             length_sorted_idx = self._interleave_sorted_indices(length_sorted_idx)
         inputs_sorted = [inputs[idx] for idx in length_sorted_idx]
 
-        is_hpu = self.device.type == "hpu"
+        is_hpu = device.type == "hpu"
         for start_index in trange(0, len(inputs_sorted), batch_size, desc="Batches", disable=not show_progress_bar):
             inputs_batch = inputs_sorted[start_index : start_index + batch_size]
             features = self.preprocess(inputs_batch, prompt=prompt, **kwargs)
@@ -999,8 +997,8 @@ class SentenceTransformer(BaseModel, FitMixin):
 
         all_embeddings = [all_embeddings[idx] for idx in np.argsort(length_sorted_idx)]
 
-        if all_embeddings and output_value == "sentence_embedding":
-            return torch.stack(all_embeddings)
+        if output_value == "sentence_embedding":
+            return torch.stack(all_embeddings) if all_embeddings else torch.tensor([], device=device)
 
         return all_embeddings
 
