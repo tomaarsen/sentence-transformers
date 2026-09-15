@@ -98,8 +98,11 @@ class CSRReconstructionLoss(nn.Module):
             # L(4k) = ||f(x) - f(dx)_4k||₂²
             L_4k = F.mse_loss(x, recons_4k)
 
-            # L_aux = ||e - ê||₂²
-            L_aux = normalized_mean_squared_error(recons_aux, x - reconsk_pre_bias.detach())
+            if recons_aux is not None:
+                # L_aux = ||e - ê||₂²
+                L_aux = normalized_mean_squared_error(recons_aux, x - reconsk_pre_bias.detach())
+            else:
+                L_aux = torch.zeros_like(L_k)
 
             # Accumulate losses
             total_L_k += L_k
