@@ -127,22 +127,15 @@ class BatchSemiHardTripletLoss(nn.Module):
         adjacency_not = ~adjacency
 
         batch_size = torch.numel(labels)
-        pdist_matrix_tile = pdist_matrix.repeat([batch_size, 1])
-
-        mask = adjacency_not.repeat([batch_size, 1]) & (pdist_matrix_tile > torch.reshape(pdist_matrix.t(), [-1, 1]))
-
-        mask_final = torch.reshape(torch.sum(mask, 1, keepdims=True) > 0.0, [batch_size, batch_size])
-        mask_final = mask_final.t()
-
-        negatives_outside = torch.reshape(
-            BatchSemiHardTripletLoss._masked_minimum(pdist_matrix_tile, mask), [batch_size, batch_size]
+        # Sort and search to avoid cubic distance and mask tensors.
+        negatives = pdist_matrix.masked_fill(adjacency, torch.inf)
+        sorted_negatives = negatives.sort(dim=1, stable=True).values
+        positions = torch.searchsorted(
+            sorted_negatives.detach().contiguous(), pdist_matrix.detach().contiguous(), right=True
         )
-        negatives_outside = negatives_outside.t()
-
+        negatives_outside = sorted_negatives.gather(1, positions.clamp(max=batch_size - 1))
         negatives_inside = BatchSemiHardTripletLoss._masked_maximum(pdist_matrix, adjacency_not)
-        negatives_inside = negatives_inside.repeat([1, batch_size])
-
-        semi_hard_negatives = torch.where(mask_final, negatives_outside, negatives_inside)
+        semi_hard_negatives = torch.where(torch.isfinite(negatives_outside), negatives_outside, negatives_inside)
 
         loss_mat = (pdist_matrix - semi_hard_negatives) + self.margin
 
@@ -155,15 +148,6 @@ class BatchSemiHardTripletLoss(nn.Module):
         ) / num_positives.clamp(min=1e-16)
 
         return triplet_loss
-
-    @staticmethod
-    def _masked_minimum(data: Tensor, mask: Tensor, dim: int = 1) -> Tensor:
-        axis_maximums, _ = data.max(dim, keepdims=True)
-        masked_minimums = (data - axis_maximums) * mask
-        masked_minimums, _ = masked_minimums.min(dim, keepdims=True)
-        masked_minimums += axis_maximums
-
-        return masked_minimums
 
     @staticmethod
     def _masked_maximum(data: Tensor, mask: Tensor, dim: int = 1) -> Tensor:
