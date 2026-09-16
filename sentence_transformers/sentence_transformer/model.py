@@ -933,14 +933,15 @@ class SentenceTransformer(BaseModel, FitMixin):
         **kwargs,
     ) -> list[Tensor] | Tensor | list[dict[str, Any]]:
         """Run local inference on normalized inputs with resolved arguments."""
-        if self.device.type == "hpu" and not self.is_hpu_graph_enabled:
+        device = self._resolve_inference_device(device)
+        is_hpu = device.type == "hpu"
+        if is_hpu and not self.is_hpu_graph_enabled:
             import habana_frameworks.torch as ht
 
             if hasattr(ht, "hpu") and hasattr(ht.hpu, "wrap_in_hpu_graph"):
                 ht.hpu.wrap_in_hpu_graph(self, disable_tensor_cache=True)
                 self.is_hpu_graph_enabled = True
 
-        device = self._resolve_inference_device(device)
         self.eval()
 
         all_embeddings = []
@@ -949,7 +950,6 @@ class SentenceTransformer(BaseModel, FitMixin):
             length_sorted_idx = self._interleave_sorted_indices(length_sorted_idx)
         inputs_sorted = [inputs[idx] for idx in length_sorted_idx]
 
-        is_hpu = device.type == "hpu"
         for start_index in trange(0, len(inputs_sorted), batch_size, desc="Batches", disable=not show_progress_bar):
             inputs_batch = inputs_sorted[start_index : start_index + batch_size]
             features = self.preprocess(inputs_batch, prompt=prompt, **kwargs)

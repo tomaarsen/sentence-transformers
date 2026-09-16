@@ -13,6 +13,7 @@ import traceback
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
+from functools import cached_property
 from itertools import chain
 from multiprocessing import Queue
 from pathlib import Path
@@ -272,14 +273,12 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
 
         super().__init__(modules)
 
-        # Cast non-input modules to match the first module's dtype for consistency.
-        # The first module (e.g. Transformer) is the dtype source of truth and downstream
-        # modules (Dense, Pooling, etc.) should match it.
-        first_param = next(self[0].parameters(), None)
         self._device_map = device_map
+        self._modules_placed = False
         if self._placement_is_delegated:
-            self._align_modules_around_backbone(dtype=first_param.dtype if first_param is not None else None)
+            self._place_modules()
         else:
+            first_param = next(self[0].parameters(), None)
             if first_param is not None:
                 for module in list(self.children())[1:]:
                     module.to(first_param.dtype)
@@ -1517,42 +1516,48 @@ This pull request has been automatically generated to add {self.__class__.__name
                 except TypeError:
                     module.gradient_checkpointing_enable()
 
-    def _align_modules_around_backbone(self, dtype: torch.dtype | None = None) -> torch.device:
-        """Align auxiliary modules without changing loaded backbones or dispatched submodules. Return the device."""
+    def _place_modules(self) -> None:
+        """Align auxiliary modules without changing backbones or dispatched submodules."""
         device = self.device
+        first_param = next(self[0].parameters(), None)
+        dtype = first_param.dtype if first_param is not None else None
         modules = list(self.modules())
-        placed = set()
+        protected: set[nn.Module] = set()
 
         def collect_hook(module: nn.Module, hook: ModelHook | None) -> None:
             if getattr(hook, "execution_device", None) is not None:
                 if getattr(hook, "place_submodules", True):
-                    placed.update(id(child) for child in module.modules())
+                    protected.update(module.modules())
                 else:
-                    placed.add(id(module))
+                    protected.add(module)
             for child in getattr(hook, "hooks", ()):
                 collect_hook(module, child)
 
         for module in modules:
             if self._device_map is not None and isinstance(module, Transformer):
-                placed.update(id(child) for child in module.model.modules())
+                protected.update(module.model.modules())
             elif self._device_map is not None and isinstance(module, PreTrainedModel):
-                placed.update(id(child) for child in module.modules())
+                protected.update(module.modules())
             collect_hook(module, module.__dict__.get("_hf_hook"))
 
         def convert(tensor: Tensor) -> Tensor:
             return tensor.to(device=device, dtype=dtype if tensor.is_floating_point() or tensor.is_complex() else None)
 
         for module in reversed(modules):
-            if id(module) not in placed:
+            if module not in protected:
                 if isinstance(module, BaseModel):
                     super(BaseModel, module)._apply(convert, recurse=False)
                 else:
                     module._apply(convert, recurse=False)
-        return device
 
     @torch.inference_mode(False)
     def _resolve_inference_device(self, device: int | str | torch.device | None) -> torch.device:
-        """Resolve the input device and skip redundant or delegated model moves."""
+        """Resolve the input device and skip redundant or delegated model moves.
+
+        Delegated models align auxiliary modules during construction and again on first inference
+        to include modules added afterward. Finish assembling the model before that inference call,
+        or clear the placement cache to prepare it again.
+        """
         if self._placement_is_delegated:
             if device is not None:
                 override = (
@@ -1564,7 +1569,10 @@ This pull request has been automatically generated to add {self.__class__.__name
                     f"Ignoring `device={device}`, as a device map or Accelerate hooks control "
                     f"this model's placement. {override}"
                 )
-            return self._align_modules_around_backbone()
+            if not self._modules_placed:
+                self._place_modules()
+                self._modules_placed = True
+            return self.device
 
         if device is None:
             device = self.device
@@ -1616,7 +1624,16 @@ This pull request has been automatically generated to add {self.__class__.__name
             raise RuntimeError("You can't move a model that has some modules offloaded to cpu or disk.")
         return super()._apply(*args, **kwargs)
 
-    @property
+    def clear_placement_cache(self) -> None:
+        """Clear the cached Accelerate hook and repeat auxiliary alignment on the next inference.
+
+        Call this after attaching, replacing, or removing Accelerate hooks on an existing model.
+        It also prepares modules added after the first inference call.
+        """
+        self.__dict__.pop("_accelerate_placement_hook", None)
+        self._modules_placed = False
+
+    @cached_property
     def _accelerate_placement_hook(self) -> ModelHook | None:
         """The first placement hook, including hooks on ordinary modules and inside SequentialHook."""
 
