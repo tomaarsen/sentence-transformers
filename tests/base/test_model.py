@@ -1542,6 +1542,24 @@ def test_mixed_gpu_offload_map_with_auxiliary_dense(tmp_path: Path, offload: str
         assert {name: parameter.device for name, parameter in model.named_parameters()} == before
 
 
+def test_placement_dtype_ignores_outer_parameters() -> None:
+    from sentence_transformers.sentence_transformer.modules import Dense
+
+    model = SentenceTransformer(
+        "sentence-transformers-testing/stsb-bert-tiny-safetensors",
+        model_kwargs={"device_map": {"": "cpu"}, "dtype": torch.float64},
+    )
+    dense = Dense(model.get_embedding_dimension(), 32).double()
+    model.add_module("dense", dense)
+    model.register_parameter("scale", nn.Parameter(torch.ones(1)))
+
+    embeddings = model.encode(["hello"], convert_to_tensor=True)
+
+    assert embeddings.shape == (1, 32)
+    assert embeddings.dtype == dense.linear.weight.dtype == model.transformers_model.dtype == torch.float64
+    torch.testing.assert_close(model.encode(["hello"], convert_to_tensor=True), embeddings)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
 @pytest.mark.parametrize("explicit_device", [False, True])
 @pytest.mark.parametrize(

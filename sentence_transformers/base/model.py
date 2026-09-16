@@ -1518,7 +1518,9 @@ This pull request has been automatically generated to add {self.__class__.__name
 
     def _place_modules(self) -> None:
         """Align auxiliary modules without changing backbones or dispatched submodules."""
-        device, dtype = self.device, self.dtype
+        device = self.device
+        first_param = next(self[0].parameters(), None)
+        dtype = first_param.dtype if first_param is not None else None
         modules = list(self.modules())
         protected: set[nn.Module] = set()
 
