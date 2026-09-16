@@ -3,7 +3,7 @@ Input Formats
 
 This page describes input formats for :class:`~sentence_transformers.sentence_transformer.model.SentenceTransformer`, :class:`~sentence_transformers.cross_encoder.model.CrossEncoder`, :class:`~sentence_transformers.sparse_encoder.model.SparseEncoder`, and :class:`~sentence_transformers.multi_vector_encoder.model.MultiVectorEncoder` models. Supported modalities depend on the loaded model.
 
-Use :attr:`model.modalities <sentence_transformers.base.model.BaseModel.modalities>` to list supported modalities and :meth:`model.supports("image") <sentence_transformers.base.model.BaseModel.supports>` to check a particular modality. For multimodal models, the model's processor determines the supported media formats and preprocessing requirements. The examples below assume a model supporting the illustrated inputs and media already loaded into the named variables.
+Use :attr:`model.modalities <sentence_transformers.base.model.BaseModel.modalities>` to list supported modalities and :meth:`model.supports("image") <sentence_transformers.base.model.BaseModel.supports>` to check a particular modality. The input module and processor determine which representations of that modality are accepted.
 
 For embedding models, ``encode()``, ``encode_query()``, and ``encode_document()`` accept the same input formats for the modalities supported by the model.
 
@@ -65,7 +65,7 @@ Multimodal models can recognize media paths and URLs by their extensions. To exp
 Images
 ------
 
-Pass local file paths as strings, or use image URLs:
+Pass local image paths as strings, or use image URLs:
 
 .. code-block:: python
 
@@ -98,7 +98,7 @@ A local file must exist for automatic path detection. If a URL lacks a recogniza
 Audio
 -----
 
-Pass audio paths or URLs to the model's processor:
+Pass local audio paths or URLs when the model's processor supports decoding them:
 
 .. code-block:: python
 
@@ -107,14 +107,17 @@ Pass audio paths or URLs to the model's processor:
        "https://huggingface.co/datasets/Narsil/asr_dummy/resolve/main/1.flac",
    ])
 
-For a waveform already in memory, provide its sampling rate. A mono waveform has shape ``(num_samples,)``. Both NumPy arrays and PyTorch tensors can be wrapped this way:
+You can also decode audio yourself, which is required for processors that expect waveforms. Use the sampling rate expected by the processor. This example loads and resamples audio to 16 kHz:
 
 .. code-block:: python
 
+   from transformers.audio_utils import load_audio
+
+   waveform = load_audio("speech.wav", sampling_rate=16000)
    audio = {"array": waveform, "sampling_rate": 16000}
    embeddings = model.encode([audio])
 
-Alternatively, pass the waveform directly and set the sampling rate through ``processing_kwargs``:
+A mono waveform has shape ``(num_samples,)``. Both NumPy arrays and PyTorch tensors can be passed with ``"array"`` and ``"sampling_rate"`` this way. Alternatively, pass the waveform directly and set the sampling rate through ``processing_kwargs``:
 
 .. code-block:: python
 
@@ -123,7 +126,7 @@ Alternatively, pass the waveform directly and set the sampling rate through ``pr
        processing_kwargs={"audio": {"sampling_rate": 16000}},
    )
 
-Use the sampling rate expected by the model's processor. Setting ``sampling_rate`` describes the waveform and does not resample it. Audio wrappers in the same batch must have the same sampling rate.
+In embedding calls, ``sampling_rate`` describes the supplied waveform and does not resample it. Audio wrappers in the same batch must have the same sampling rate.
 
 You can also pass a :class:`torchcodec.AudioDecoder <torchcodec.decoders.AudioDecoder>`, optionally configured to decode at the required sampling rate:
 
@@ -139,13 +142,13 @@ You can also pass a :class:`torchcodec.AudioDecoder <torchcodec.decoders.AudioDe
 Video
 -----
 
-Pass local video paths or URLs, such as these clips from `example-documents <https://huggingface.co/datasets/sentence-transformers/example-documents>`_. The processor handles decoding, sampling, and timing metadata:
+Pass local video paths or URLs, such as this clip from `example-documents <https://huggingface.co/datasets/sentence-transformers/example-documents>`_. The processor handles decoding, sampling, and timing metadata:
 
 .. code-block:: python
 
    embeddings = model.encode([
+       "clip_a.mp4",
        "https://huggingface.co/datasets/sentence-transformers/example-documents/resolve/main/mapo_tofu.mp4",
-       "https://huggingface.co/datasets/sentence-transformers/example-documents/resolve/main/zhajiang_noodle.mp4",
    ])
 
 For pre-sampled frames, attach metadata to each video and disable further sampling. ``frames_a`` and ``frames_b`` below contain three and two sampled frames, respectively. They can be NumPy/PyTorch arrays with shape ``(num_frames, C, H, W)`` or ``(num_frames, H, W, C)``, or lists of PIL images.
@@ -257,12 +260,12 @@ The modality keys are ``"text"``, ``"image"``, ``"audio"``, and ``"video"``. Kee
 
       can_mix = all(model.supports(modality) for modality in ("text", "image", "message"))
 
-   This differs from combining modalities within one input. :meth:`model.supports(("image", "text")) <sentence_transformers.base.model.BaseModel.supports>` returns ``True`` if the tuple is explicitly listed in ``model.modalities``, or if both modalities and ``"message"`` are supported. An explicitly supported tuple alone does not imply support for mixed-modality batches.
+   Support for combining text and images within one input does not necessarily imply support for mixed-modality batches. See :meth:`model.supports() <sentence_transformers.base.model.BaseModel.supports>` for how modality combinations are checked.
 
 Processing options
 ------------------
 
-Use ``processing_kwargs`` for per-call processing options, grouped by modality. This differs from ``processor_kwargs``, which configures processor initialization when loading the model:
+For models using the :class:`~sentence_transformers.base.modules.Transformer` input module, use ``processing_kwargs`` for per-call processing options, grouped by modality. This differs from ``processor_kwargs``, which configures processor initialization when loading the model:
 
 .. code-block:: python
 
