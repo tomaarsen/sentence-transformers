@@ -415,8 +415,8 @@ def quantize_embeddings(
     speed of similarity search. The supported precisions are "float32", "int8", "uint8", "binary", and "ubinary".
 
     Args:
-        embeddings: Unquantized (e.g. float) embeddings with to quantize
-            to a given precision
+        embeddings: Unquantized (e.g. float) embeddings to quantize
+            to a given precision.
         precision: The precision to convert to. Options are "float32",
             "int8", "uint8", "binary", "ubinary".
         ranges (Optional[np.ndarray]): Ranges for quantization of
@@ -441,17 +441,18 @@ def quantize_embeddings(
         embeddings = embeddings.cpu().numpy()
     elif isinstance(embeddings, list):
         if not embeddings:
-            # Nothing to quantize: preserve the (empty) list shape.
             return []
         if isinstance(embeddings[0], Tensor):
             embeddings = [embedding.cpu().numpy() for embedding in embeddings]
-        # Multi-vector input: a list of (num_tokens, dim) matrices (possibly ragged, one per text). Quantize
-        # each matrix separately to preserve the variable-length structure, but share the per-dimension
-        # buckets across all matrices (from `ranges` / `calibration_embeddings`, else all tokens together) so
-        # values quantize consistently across matrices.
         if isinstance(embeddings[0], np.ndarray) and embeddings[0].ndim == 2:
-            if precision.endswith("int8") and ranges is None and calibration_embeddings is None:
-                calibration_embeddings = np.concatenate(embeddings, axis=0)
+            # Calibrate once so all documents use the same ranges.
+            if precision.endswith("int8") and ranges is None:
+                if calibration_embeddings is None:
+                    calibration_embeddings = np.concatenate(embeddings, axis=0)
+                if len(calibration_embeddings):
+                    ranges = np.vstack(
+                        (np.min(calibration_embeddings, axis=0), np.max(calibration_embeddings, axis=0))
+                    )
             return [
                 quantize_embeddings(
                     matrix, precision=precision, ranges=ranges, calibration_embeddings=calibration_embeddings
