@@ -436,7 +436,15 @@ class InputFormatter:
             if isinstance(modality, str):
                 processed_inputs = {modality: processed_inputs}
             else:
-                ordered_keys = processed_inputs[0].keys()
+                ordered_keys = tuple(processed_inputs[0])
+                if (self.supported_modalities is None or "message" in self.supported_modalities) and any(
+                    tuple(entry) != ordered_keys for entry in processed_inputs[1:]
+                ):
+                    return (
+                        "message",
+                        {"message": [self.to_message(entry) for entry in processed_inputs]},
+                        extra_modality_kwargs,
+                    )
                 processed_inputs = {mod: [entry[mod] for entry in processed_inputs] for mod in ordered_keys}
         else:
             logger.debug(f"Mixed modalities detected: {unique_modalities}. Converting to 'message' format.")
@@ -523,10 +531,8 @@ class InputFormatter:
                 messages.append({"role": role, "content": item})
             else:
                 typed_input = (
-                    {mod: item[mod] for mod in modality}
-                    if isinstance(modality, tuple)
-                    else item
-                    if isinstance(item, dict) and item.keys() == {modality}
+                    item
+                    if isinstance(item, dict) and (isinstance(modality, tuple) or item.keys() == {modality})
                     else {modality: item}
                 )
                 messages.extend(self.to_message(typed_input, role=role))

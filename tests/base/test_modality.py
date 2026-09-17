@@ -770,6 +770,34 @@ class TestParseInputs:
         modality, inputs, extra = self.fmt.parse_inputs(dicts)
         assert list(inputs.keys()) == ["image", "text"]
 
+    @pytest.mark.parametrize("supported_modalities", [None, ["message"], [("image", "text"), "message"]])
+    @pytest.mark.parametrize("collections", [False, True])
+    def test_multimodal_batch_preserves_each_samples_key_order(self, supported_modalities, collections):
+        fmt = InputFormatter(model_type="test", message_format="structured", supported_modalities=supported_modalities)
+        texts = ["text_a", "text_b"] if collections else "text_a"
+        images = ["image_a", "image_b"] if collections else "image_a"
+        samples = [{"text": texts, "image": images}, {"image": images, "text": texts}]
+        modality, inputs, _ = fmt.parse_inputs(samples)
+        assert modality == "message"
+        text_content = [{"type": "text", "text": text} for text in (texts if collections else [texts])]
+        image_content = [{"type": "image", "image": image} for image in (images if collections else [images])]
+        assert inputs["message"] == [
+            [{"role": "user", "content": text_content + image_content}],
+            [{"role": "user", "content": image_content + text_content}],
+        ]
+        assert [list(sample) for sample in samples] == [["text", "image"], ["image", "text"]]
+
+    def test_different_key_orders_keep_native_processor_arguments(self):
+        fmt = InputFormatter(model_type="test", supported_modalities=[("image", "text")])
+        modality, inputs, _ = fmt.parse_inputs(
+            [
+                {"text": "a cat", "image": "cat.jpg"},
+                {"image": "dog.jpg", "text": "a dog"},
+            ]
+        )
+        assert modality == ("image", "text")
+        assert inputs == {"text": ["a cat", "a dog"], "image": ["cat.jpg", "dog.jpg"]}
+
     def test_multimodal_dict_audio_only_wrapper_raw_array(self):
         """A ``{"audio": array}`` wrapper with a raw array should behave like bare audio inputs."""
         arr = np.zeros(16000)
@@ -1010,7 +1038,7 @@ class TestBatchToMessage:
 
         text_content = [{"type": "text", "text": text} for text in texts]
         image_content = [{"type": "image", "image": image} for image in images]
-        expected = image_content + text_content if images_first or paired else text_content + image_content
+        expected = image_content + text_content if images_first else text_content + image_content
         assert len(inputs["message"]) == 1
         messages = inputs["message"][0]
         assert [message["role"] for message in messages] == (["query", "document"] if paired else ["user"])
@@ -1303,6 +1331,32 @@ class TestIsNonTextPair:
 
 
 class TestPairToMessages:
+    @pytest.mark.parametrize("modalities", [("text", "image"), ("image", "text")])
+    def test_compound_modality_preserves_user_order_in_both_roles(self, modalities):
+        fmt = InputFormatter(model_type="test", message_format="structured")
+        values = {"text": "description", "image": "image_a"}
+        sample = {modality: values[modality] for modality in modalities}
+        result = fmt.pair_to_messages((sample, sample))
+        assert [message["role"] for message in result] == ["query", "document"]
+        for message in result:
+            assert message["content"] == [{"type": modality, modality: values[modality]} for modality in modalities]
+
+    @pytest.mark.parametrize("modality", ["image", "audio", "video"])
+    @pytest.mark.parametrize("container", [list, tuple])
+    @pytest.mark.parametrize("with_text", [False, True])
+    def test_media_collection_matches_single_input_content(self, modality, container, with_text):
+        fmt = InputFormatter(model_type="test", message_format="structured")
+        sample = {modality: container(["a", "b"])}
+        if with_text:
+            sample = {"text": "description", **sample}
+        result = fmt.pair_to_messages(("query", sample))
+        detected, inputs, _ = fmt.parse_inputs([sample])
+        _, single = fmt.batch_to_message(detected, inputs)
+        assert result[1] == {**single["message"][0][0], "role": "document"}
+        assert [item["type"] for item in result[1]["content"]] == (
+            ["text", modality, modality] if with_text else [modality, modality]
+        )
+
     def test_structured_same_modality(self):
         fmt = InputFormatter(model_type="test", message_format="structured")
         img1 = Image.new("RGB", (32, 32))

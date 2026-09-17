@@ -272,7 +272,7 @@ For a model with a structured chat template, a modality value can also be a list
        "image": [image_a, image_b],
    })
 
-Each text and image becomes a separate content item in the same message. The order within each collection is preserved. The model and processor must support multiple media items in one input.
+Each text and image becomes a separate content item in the same message. Content follows each input's dict key order and the order within each collection, so this example places the four texts before the two images. The model and processor must support multiple media items in one input.
 
 For video collections and frame metadata, see :ref:`input-formats-video`. Text-only inputs containing two strings retain the pair behavior described in :ref:`input-formats-batches`.
 
@@ -320,6 +320,8 @@ For Cross Encoder models, ``predict()`` scores pairs and ``rank()`` scores a que
 
    scores = reranker.predict([("A cat", image_a), ("A dog", image_b)])
    rankings = reranker.rank("A cat", [image_a, image_b])
+
+For CrossEncoder models with chat templates, the query message precedes the document message. Within each message, content follows the user's dict key order and the order within each collection.
 
 Cross Encoder models can score audio or video inputs when the checkpoint supports those modalities. However, pairs do not currently support the ``{"array": ..., "sampling_rate": ...}`` or ``{"array": ..., "video_metadata": ...}`` forms, or TorchCodec decoder objects. This limitation applies to ``predict()``, ``rank()``, and Cross Encoder training. These forms are supported in embedding calls and dataset columns for embedding-model training.
 
