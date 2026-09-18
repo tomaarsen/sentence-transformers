@@ -1951,6 +1951,11 @@ class Transformer(InputModule):
             )
 
         if isinstance(self.processor, ProcessorMixin):
+            video_kwargs = dict(modality_kwargs["video"])
+            chat_template_kwargs = {
+                "load_audio_from_video": video_kwargs.pop("load_audio_from_video", False),
+                **chat_template_kwargs,
+            }
             # Transformers v5.4.0 prefers us to pass processor_kwargs as a single dict, but there's still some top level
             # kwargs that need to be hoisted out for backwards compatibility.
             if _TRANSFORMERS_APPLY_CHAT_TEMPLATE_RECOMMENDS_PROCESSOR_KWARGS:
@@ -1959,12 +1964,11 @@ class Transformer(InputModule):
                     tokenize=True,
                     return_dict=True,
                     return_tensors=common_kwargs.get("return_tensors"),
-                    load_audio_from_video=modality_kwargs["video"].get("load_audio_from_video", False),
                     processor_kwargs={
                         "text_kwargs": modality_kwargs["text"],
                         "images_kwargs": modality_kwargs["image"],
                         "audio_kwargs": modality_kwargs["audio"],
-                        "videos_kwargs": modality_kwargs["video"],
+                        "videos_kwargs": video_kwargs,
                         "common_kwargs": common_kwargs,
                     },
                     **chat_template_kwargs,
@@ -1976,7 +1980,7 @@ class Transformer(InputModule):
                 text_kwargs=modality_kwargs["text"],
                 images_kwargs=modality_kwargs["image"],
                 audio_kwargs=modality_kwargs["audio"],
-                videos_kwargs=modality_kwargs["video"],
+                videos_kwargs=video_kwargs,
                 common_kwargs=common_kwargs,
                 **chat_template_kwargs,
             )
