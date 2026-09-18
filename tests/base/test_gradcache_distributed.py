@@ -8,6 +8,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from packaging.version import Version
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel
@@ -123,6 +124,10 @@ def _run_gradcache_ddp(rank, world_size, init_method):
                 mini_batch_num_tokens=6 if case in ("token_budget", "buffers") else None,
             )
             features = _features(rank, case)
+            if ddp.find_unused_parameters and Version(torch.__version__) < Version("2.4"):
+                with pytest.raises(ValueError, match="find_unused_parameters=True require PyTorch >=2.4"):
+                    loss_fn(features).backward()
+                continue
             optimizer = torch.optim.SGD(ddp.parameters(), lr=0.01)
             reference_optimizer = torch.optim.SGD(reference.parameters(), lr=0.01)
             for _ in range(2):
@@ -156,7 +161,9 @@ def _run_gradcache_ddp(rank, world_size, init_method):
                         continue
                     dist.all_reduce(expected.grad)
                     expected.grad.div_(world_size)
-                    torch.testing.assert_close(actual.grad, expected.grad, atol=1e-6, rtol=1e-5, msg=case)
+                    torch.testing.assert_close(
+                        actual.grad, expected.grad, atol=1e-6, rtol=1e-5, msg=lambda msg: f"{case}: {msg}"
+                    )
                 optimizer.step()
                 reference_optimizer.step()
                 for actual, expected in zip(ddp.parameters(), reference.parameters()):

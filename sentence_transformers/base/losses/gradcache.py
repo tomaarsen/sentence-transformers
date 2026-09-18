@@ -24,6 +24,7 @@ from typing import Any
 
 import torch
 import tqdm
+from packaging.version import Version
 from torch import Tensor
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.checkpoint import get_device_states, set_device_states
@@ -296,8 +297,20 @@ def _backward_hook(
     Every mini-batch is scaled by ``grad_output``, which is whatever the outer backward pass hands us,
     so the fp16 gradient scaler and the gradient accumulation division reach all of them.
     DDP synchronizes once after replay, unless an outer ``no_sync`` defers synchronization further.
+    Unused parameter detection requires PyTorch >=2.4 to avoid incorrect DDP synchronization.
     """
     model = getattr(loss_obj.model, "_orig_mod", loss_obj.model)
+    if (
+        isinstance(model, DistributedDataParallel)
+        and model.find_unused_parameters
+        and Version(torch.__version__) < Version("2.4")
+    ):
+        raise ValueError(
+            "Cached losses with DDP find_unused_parameters=True require PyTorch >=2.4 due to "
+            "a gradient synchronization bug (https://github.com/pytorch/pytorch/pull/124193). "
+            "Upgrade PyTorch, or set ddp_find_unused_parameters=False if every trainable parameter "
+            "is used in each mini-batch."
+        )
     no_sync = model.no_sync if isinstance(model, DistributedDataParallel) else nullcontext
     remaining = sum(len(column) for column in cache)
     last_trainable = None
