@@ -643,6 +643,10 @@ class TestPreprocess:
         assert transformer.processor.padding_side == "left"
         assert features["attention_mask"][:, -1].all()
 
+    @pytest.mark.skipif(
+        parse_version(torch.__version__) < Version("2.4"),
+        reason="Llama rotary embeddings call torch.is_autocast_enabled(device_type), which requires torch>=2.4.",
+    )
     @pytest.mark.parametrize("logits_to_keep", [0, 3])
     def test_causal_logits_processing_kwargs(self, tmp_path, logits_to_keep):
         transformer = Transformer(
