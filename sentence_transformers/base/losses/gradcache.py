@@ -355,8 +355,14 @@ def _backward_hook(
                     if not reps_mb.requires_grad:
                         continue
                     last_trainable = (embed_kwargs, index)
-                    # Compute the surrogate in fp32 when cached gradients came from autocast.
-                    surrogate = torch.dot(reps_mb.flatten().float(), grad_mb.flatten().float()) * grad_output
+                    # Preserve double precision while keeping low-precision replay at least fp32.
+                    surrogate_dtype = torch.promote_types(reps_mb.dtype, grad_mb.dtype)
+                    if surrogate_dtype in (torch.float16, torch.bfloat16):
+                        surrogate_dtype = torch.float32
+                    surrogate = (
+                        torch.dot(reps_mb.flatten().to(surrogate_dtype), grad_mb.flatten().to(surrogate_dtype))
+                        * grad_output
+                    )
                     surrogate.backward()
                     synchronized = remaining == 0
 
