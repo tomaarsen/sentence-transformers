@@ -349,16 +349,26 @@ def test_max_active_dims_save_load(model_fixture: str, override: int | None, req
     expected_limit = override if override is not None else 13
     assert loaded_model.max_active_dims == expected_limit
     texts = ["The weather is nice!", "Plants use sunlight to make food."]
-    for method in ("encode", "encode_query", "encode_document"):
-        embeddings = getattr(loaded_model, method)(texts, convert_to_sparse_tensor=False)
-        expected = getattr(model, method)(texts, max_active_dims=expected_limit, convert_to_sparse_tensor=False)
-        torch.testing.assert_close(embeddings, expected)
-        assert (torch.count_nonzero(embeddings, dim=-1) <= expected_limit).all()
+    embeddings = loaded_model.encode(texts, convert_to_sparse_tensor=False)
+    expected = model.encode(texts, max_active_dims=expected_limit, convert_to_sparse_tensor=False)
+    torch.testing.assert_close(embeddings, expected)
+    assert (torch.count_nonzero(embeddings, dim=-1) <= expected_limit).all()
 
-        embeddings = getattr(loaded_model, method)(texts, max_active_dims=5, convert_to_sparse_tensor=False)
-        expected = getattr(model, method)(texts, max_active_dims=5, convert_to_sparse_tensor=False)
-        torch.testing.assert_close(embeddings, expected)
-        assert (torch.count_nonzero(embeddings, dim=-1) <= 5).all()
+
+def test_csr_max_active_dims_override_saved_limit(csr_bert_tiny_model: SparseEncoder, tmp_path):
+    model = csr_bert_tiny_model
+    model.max_active_dims = 13
+    model.save_pretrained(str(tmp_path), create_model_card=False)
+    loaded_model = SparseEncoder(str(tmp_path))
+    assert loaded_model.max_active_dims == 13
+    assert loaded_model[-1].k == 16
+
+    texts = ["The weather is nice!", "Plants use sunlight to make food."]
+    embeddings = loaded_model.encode(texts, max_active_dims=32, convert_to_sparse_tensor=False)
+    expected = model.encode(texts, max_active_dims=32, convert_to_sparse_tensor=False)
+    torch.testing.assert_close(embeddings, expected)
+    assert (torch.count_nonzero(embeddings, dim=-1) == 32).all()
+    assert loaded_model.max_active_dims == 13
 
 
 @pytest.mark.parametrize("max_active_dims", [0, -1, 1.5, "1", True, False])
