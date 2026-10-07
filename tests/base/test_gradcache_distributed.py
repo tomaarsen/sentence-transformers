@@ -83,7 +83,7 @@ def _features(rank, case):
     return features
 
 
-def _run_gradcache_ddp(rank, world_size, init_method):
+def _run_gradcache_ddp(rank, world_size, init_method, static_graph=False, accumulate=True):
     torch.set_num_threads(1)
     dist.init_process_group(
         "gloo", rank=rank, world_size=world_size, init_method=init_method, timeout=timedelta(seconds=30)
@@ -102,10 +102,17 @@ def _run_gradcache_ddp(rank, world_size, init_method):
             "all_frozen",
             "routed",
         ):
+            if static_graph and case == "routed":
+                # Routed mini-batches use different parameters, violating the static-graph contract.
+                continue
             torch.manual_seed(42)
             model = TinyModel(routed=case == "routed", buffers=case in ("buffers", "frozen_one_rank"))
             reference = deepcopy(model)
-            ddp = DistributedDataParallel(model, find_unused_parameters=case in ("routed", "frozen_last_unused"))
+            ddp = DistributedDataParallel(
+                model,
+                find_unused_parameters=case in ("routed", "frozen_last_unused"),
+                static_graph=static_graph,
+            )
             sync_count = [0]
 
             def count_sync(state, bucket):
@@ -130,27 +137,32 @@ def _run_gradcache_ddp(rank, world_size, init_method):
                 continue
             optimizer = torch.optim.SGD(ddp.parameters(), lr=0.01)
             reference_optimizer = torch.optim.SGD(reference.parameters(), lr=0.01)
-            for _ in range(2):
+            for step in range(2):
                 optimizer.zero_grad()
                 reference_optimizer.zero_grad()
-                sync_count[0] = 0
-                for accumulating in (True, False):
+                for accumulating in (True, False) if accumulate else (False,):
+                    sync_count[0] = 0
                     model.forward_calls.clear()
+                    initializing = static_graph and step == 0 and (accumulating or not accumulate)
+                    loss_scale = 2 if accumulate else 1
                     with ddp.no_sync() if accumulating else nullcontext():
-                        loss = loss_fn(features) / 2
+                        loss = loss_fn(features) / loss_scale
                         assert not any(with_grad for with_grad, _ in model.forward_calls), case
                         num_minibatches = len(model.forward_calls)
                         model.forward_calls.clear()
                         loss.backward()
+                        assert ddp.require_backward_grad_sync == (not accumulating), case
                     replay = model.forward_calls[:num_minibatches]
                     needs_flush = not accumulating and any(trainable for _, trainable in replay) and not replay[-1][1]
                     assert len(model.forward_calls) == num_minibatches + int(needs_flush), case
                     expected_syncs = 0 if accumulating or case == "all_frozen" else 1
+                    if initializing and case != "all_frozen":
+                        expected_syncs += 1
                     assert sync_count[0] == expected_syncs, (case, rank, accumulating, sync_count[0])
                     assert ddp.require_backward_grad_sync
 
                     anchors, positives = [reference(feature)["sentence_embedding"] for feature in features]
-                    reference_loss = F.cross_entropy(anchors @ positives.T, torch.arange(len(anchors))) / 2
+                    reference_loss = F.cross_entropy(anchors @ positives.T, torch.arange(len(anchors))) / loss_scale
                     torch.testing.assert_close(loss, reference_loss)
                     if reference_loss.requires_grad:
                         reference_loss.backward()
@@ -174,13 +186,16 @@ def _run_gradcache_ddp(rank, world_size, init_method):
 
 @pytest.mark.skipif(not dist.is_available() or not dist.is_gloo_available(), reason="Gloo is unavailable")
 @pytest.mark.parametrize("world_size", [1, 2])
-def test_gradcache_ddp(tmp_path, world_size):
+@pytest.mark.parametrize("static_graph, accumulate", [(False, True), (True, False), (True, True)])
+def test_gradcache_ddp(tmp_path, world_size, static_graph, accumulate):
     init_method = (tmp_path / "store").as_uri()
     if world_size == 1:
         num_threads = torch.get_num_threads()
         try:
-            _run_gradcache_ddp(0, world_size, init_method)
+            _run_gradcache_ddp(0, world_size, init_method, static_graph, accumulate)
         finally:
             torch.set_num_threads(num_threads)
     else:
-        mp.spawn(_run_gradcache_ddp, args=(world_size, init_method), nprocs=world_size, join=True)
+        mp.spawn(
+            _run_gradcache_ddp, args=(world_size, init_method, static_graph, accumulate), nprocs=world_size, join=True
+        )

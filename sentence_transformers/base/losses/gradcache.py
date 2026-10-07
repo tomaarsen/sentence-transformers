@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import bisect
 from collections.abc import Iterable, Iterator
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from typing import Any
 
@@ -271,6 +271,25 @@ def has_static_embedding_input(model: Any) -> bool:
     return any(isinstance(module, StaticEmbedding) for module in input_modules)
 
 
+@contextmanager
+def _ddp_replay_context(model: Any, synchronize: bool) -> Iterator[None]:
+    if (
+        isinstance(model, DistributedDataParallel)
+        and model.static_graph
+        and not model._static_graph_delay_allreduce_enqueued
+    ):
+        require_backward_grad_sync = model.require_backward_grad_sync
+        model.require_backward_grad_sync = True
+        try:
+            yield
+        finally:
+            model.require_backward_grad_sync = require_backward_grad_sync
+    else:
+        no_sync = model.no_sync if isinstance(model, DistributedDataParallel) else nullcontext
+        with nullcontext() if synchronize else no_sync():
+            yield
+
+
 def _backward_hook(
     grad_output: Tensor,
     sentence_features: Iterable[dict[str, Tensor]],
@@ -297,6 +316,8 @@ def _backward_hook(
     Every mini-batch is scaled by ``grad_output``, which is whatever the outer backward pass hands us,
     so the fp16 gradient scaler and the gradient accumulation division reach all of them.
     DDP synchronizes once after replay, unless an outer ``no_sync`` defers synchronization further.
+    Static-graph DDP also synchronizes its first trainable mini-batch to initialize the reducer,
+    even inside an outer ``no_sync``. Subsequent mini-batches accumulate normally.
     Unused parameter detection requires PyTorch >=2.4 to avoid incorrect DDP synchronization.
     """
     model = getattr(loss_obj.model, "_orig_mod", loss_obj.model)
@@ -311,7 +332,6 @@ def _backward_hook(
             "Upgrade PyTorch, or set ddp_find_unused_parameters=False if every trainable parameter "
             "is used in each mini-batch."
         )
-    no_sync = model.no_sync if isinstance(model, DistributedDataParallel) else nullcontext
     remaining = sum(len(column) for column in cache)
     last_trainable = None
     synchronized = False
@@ -330,7 +350,7 @@ def _backward_hook(
             for index, grad_mb in enumerate(grad):
                 remaining -= 1
                 # Advancing the iterator runs the forward, which must also be inside no_sync.
-                with no_sync() if remaining else nullcontext():
+                with _ddp_replay_context(model, synchronize=remaining == 0):
                     reps_mb, *_ = next(iterator)
                     if not reps_mb.requires_grad:
                         continue
@@ -357,7 +377,7 @@ def _backward_hook(
                 index = 0
             model.require_forward_param_sync = False
             iterator = loss_obj.embed_minibatch_iter(**embed_kwargs)
-            with no_sync():
+            with model.no_sync():
                 for _ in range(index):
                     next(iterator)
             reps_mb, *_ = next(iterator)
