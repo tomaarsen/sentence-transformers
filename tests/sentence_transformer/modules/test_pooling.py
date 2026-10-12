@@ -219,6 +219,22 @@ def test_pooling_flattened_cls_uses_cls_token_embeddings() -> None:
     assert torch.allclose(sentence_embedding, cls_token_embeddings)
 
 
+@pytest.mark.parametrize("prompt_length, expected", [(2, [[1.0], [5.0], [7.0]]), (3, [[1.0], [6.0], [7.0]])])
+def test_pooling_flattened_cls_falls_back_when_prompt_covers_sequence(
+    prompt_length: int, expected: list[list[float]], device: str
+) -> None:
+    pooling = Pooling(embedding_dimension=1, pooling_mode="cls", include_prompt=False)
+    features = {
+        "token_embeddings": torch.arange(1, 9, dtype=torch.float32, device=device).reshape(1, 8, 1),
+        "cu_seq_lens_q": torch.tensor([0, 2, 6, 8], dtype=torch.int32, device=device),
+        "prompt_length": prompt_length,
+    }
+
+    output = pooling(features)["sentence_embedding"]
+
+    torch.testing.assert_close(output, torch.tensor(expected, device=device))
+
+
 def test_pooling_cls_right_padded_uses_position_zero() -> None:
     """For right-padded inputs, the first real token is at position 0."""
     dim = 1

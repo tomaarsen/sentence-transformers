@@ -305,7 +305,7 @@ class Pooling(Module):
                 else:
                     first_indices = cu_seq_lens_q[:-1]
                     if prompt_length:
-                        first_indices = first_indices + prompt_length
+                        first_indices = first_indices + torch.where(seq_lengths > prompt_length, prompt_length, 0)
                     output_vectors.append(all_embeddings[first_indices])
 
             elif mode == "lasttoken":
