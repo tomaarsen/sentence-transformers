@@ -41,7 +41,7 @@ from sentence_transformers.sentence_transformer.modules import (
     WeightedLayerPooling,
 )
 from sentence_transformers.util.similarity import SimilarityFunction
-from tests.utils import is_ci
+from tests.utils import is_ci, skip_bfloat16_cpu_crash
 
 skip_if_torch_cannot_load_bin = pytest.mark.skipif(
     parse(torch.__version__) < Version("2.6"),
@@ -1472,6 +1472,7 @@ def test_conversion_ignores_source_similarity_fn_name(tmp_path) -> None:
     assert overridden.similarity_fn_name == "dot"
 
 
+@skip_bfloat16_cpu_crash
 @pytest.mark.parametrize("precision", ["int8", "uint8", "binary", "ubinary"])
 def test_encode_precision_with_bfloat16_model(stsb_bert_tiny_model: SentenceTransformer, precision: str) -> None:
     """encode(precision=...) matches quantizing the float32 numpy output of a bfloat16 model afterwards."""
