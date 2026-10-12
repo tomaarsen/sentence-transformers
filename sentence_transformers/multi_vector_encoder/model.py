@@ -89,7 +89,9 @@ class MultiVectorEncoder(BaseModel):
             modeling files. Defaults to False.
         revision (str, optional): The specific model version to use. Defaults to None.
         local_files_only (bool, optional): Whether to only look at local files. Defaults to False.
-        token (bool or str, optional): Hugging Face authentication token. Defaults to None.
+        token (bool or str, optional): Hugging Face authentication token for higher Hub rate limits and access to
+            private or gated models your account can read. Defaults to None, which uses ``HF_TOKEN`` or
+            credentials saved with ``hf auth login``, if available.
         model_kwargs (dict[str, Any], optional): Keyword arguments passed to the underlying Hugging Face
             Transformers model. Defaults to None.
         processor_kwargs (dict[str, Any], optional): Keyword arguments passed to the Hugging Face Transformers
