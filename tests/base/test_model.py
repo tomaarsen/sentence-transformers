@@ -2033,6 +2033,15 @@ def test_private_load_with_module_classes_loads_without_trust_remote_code(tmp_pa
     reloaded.encode(["round trip"])
 
 
+def _save_cpu_dtype_checkpoint(path: Path, dtype: torch.dtype = torch.float16) -> str:
+    config = BertConfig(vocab_size=5, hidden_size=8, num_hidden_layers=1, num_attention_heads=2, intermediate_size=16)
+    BertModel(config).to(dtype).save_pretrained(path)
+    BertTokenizer(
+        vocab={token: i for i, token in enumerate(["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"])}
+    ).save_pretrained(path)
+    return str(path)
+
+
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
 @pytest.mark.parametrize(
     ("model_kwargs", "override_dtype"),
@@ -2053,17 +2062,13 @@ def test_private_load_with_module_classes_loads_without_trust_remote_code(tmp_pa
     ],
 )
 def test_cpu_dtype_warning_from_checkpoint(dtype, model_kwargs, override_dtype, tmp_path: Path, caplog) -> None:
-    config = BertConfig(vocab_size=5, hidden_size=8, num_hidden_layers=1, num_attention_heads=2, intermediate_size=16)
-    BertModel(config).to(dtype).save_pretrained(tmp_path)
-    BertTokenizer(
-        vocab={token: i for i, token in enumerate(["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"])}
-    ).save_pretrained(tmp_path)
+    model_path = _save_cpu_dtype_checkpoint(tmp_path, dtype)
 
     with caplog.at_level(logging.WARNING, logger="sentence_transformers.base.model"):
-        model = SentenceTransformer(str(tmp_path), device="cpu", model_kwargs=model_kwargs, local_files_only=True)
+        model = SentenceTransformer(model_path, device="cpu", model_kwargs=model_kwargs, local_files_only=True)
 
     assert model.dtype == (override_dtype or dtype)
-    messages = [record.message for record in caplog.records if "This model loaded with" in record.message]
+    messages = [record.message for record in caplog.records if "This model was loaded in" in record.message]
     if dtype == torch.float32 or override_dtype is not None:
         assert not messages
     else:
@@ -2074,29 +2079,75 @@ def test_cpu_dtype_warning_from_checkpoint(dtype, model_kwargs, override_dtype, 
 
 @pytest.mark.parametrize("model_class", [SentenceTransformer, SparseEncoder, CrossEncoder, MultiVectorEncoder])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-def test_cpu_dtype_warning_once(model_class, dtype, caplog) -> None:
+def test_cpu_dtype_warning_once(model_class, dtype, tmp_path: Path, caplog) -> None:
+    model_path = _save_cpu_dtype_checkpoint(tmp_path, dtype)
     with caplog.at_level(logging.WARNING, logger="sentence_transformers.base.model"):
         for _ in range(2):
-            model_class(modules=[nn.Linear(2, 2, dtype=dtype)], device="cpu")
-    assert sum("This model loaded with" in record.message for record in caplog.records) == 1
+            model_class(model_path, device="cpu", local_files_only=True)
+    assert sum("This model was loaded in" in record.message for record in caplog.records) == 1
 
 
 @pytest.mark.parametrize("backend", ["onnx", "openvino"])
-def test_cpu_dtype_warning_skips_other_backends(backend, caplog) -> None:
-    SentenceTransformer(modules=[nn.Linear(2, 2, dtype=torch.float16)], device="cpu", backend=backend)
-    assert "This model loaded with" not in caplog.text
+def test_cpu_dtype_warning_skips_other_backends(backend, tmp_path: Path, caplog) -> None:
+    model_path = _save_cpu_dtype_checkpoint(tmp_path)
+    module = BertModel.from_pretrained(model_path, local_files_only=True)
+    with patch.object(SentenceTransformer, "_load_modules", return_value=([module], None)):
+        SentenceTransformer(model_path, device="cpu", backend=backend)
+    assert "This model was loaded in" not in caplog.text
 
 
 @pytest.mark.parametrize("execution_device", ["cuda:0", "mps"])
-def test_cpu_dtype_warning_uses_execution_device(execution_device, caplog) -> None:
-    module = nn.Linear(2, 2, dtype=torch.float16)
+def test_cpu_dtype_warning_uses_execution_device(execution_device, tmp_path: Path, caplog) -> None:
+    model_path = _save_cpu_dtype_checkpoint(tmp_path)
+    module = BertModel.from_pretrained(model_path, local_files_only=True)
     module._hf_hook = SimpleNamespace(execution_device=execution_device)
-    model = SentenceTransformer(modules=[module])
+    with patch.object(SentenceTransformer, "_load_modules", return_value=([module], None)):
+        model = SentenceTransformer(model_path)
     assert next(model.parameters()).device.type == "cpu"
     assert model.device == torch.device(execution_device)
-    assert "This model loaded with" not in caplog.text
+    assert "This model was loaded in" not in caplog.text
+
+
+@pytest.mark.parametrize("dtype_key", ["dtype", "torch_dtype"])
+@pytest.mark.parametrize("model_kwargs", [None, {"dtype": "auto"}])
+def test_cpu_dtype_warning_respects_config_dtype(dtype_key, model_kwargs, tmp_path: Path, caplog) -> None:
+    model_path = _save_cpu_dtype_checkpoint(tmp_path)
+    model = SentenceTransformer(
+        model_path,
+        device="cpu",
+        model_kwargs=model_kwargs,
+        config_kwargs={dtype_key: torch.bfloat16},
+        local_files_only=True,
+    )
+    assert model.dtype == torch.bfloat16
+    assert "This model was loaded in" not in caplog.text
+
+
+def test_cpu_dtype_warning_skips_prebuilt_modules(tmp_path: Path, caplog) -> None:
+    model_path = _save_cpu_dtype_checkpoint(tmp_path)
+    module = BertModel.from_pretrained(model_path, dtype=torch.bfloat16, local_files_only=True)
+    model = SentenceTransformer(modules=[module], device="cpu")
+    assert model.dtype == torch.bfloat16
+    assert "This model was loaded in" not in caplog.text
+
+
+def test_cpu_dtype_warning_skips_static_checkpoint(tmp_path: Path, caplog, clear_warning_once_cache) -> None:
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+
+    from sentence_transformers.sentence_transformer.modules import StaticEmbedding
+
+    tokenizer = Tokenizer(WordLevel({"hello": 0, "[UNK]": 1}, unk_token="[UNK]"))
+    module = StaticEmbedding(tokenizer, embedding_weights=torch.ones(2, 8, dtype=torch.bfloat16))
+    SentenceTransformer(modules=[module], device="cpu").save_pretrained(str(tmp_path), create_model_card=False)
+    caplog.clear()
+    clear_warning_once_cache()
+
+    model = SentenceTransformer(str(tmp_path), device="cpu", local_files_only=True)
+    assert model.dtype == torch.bfloat16
+    assert "This model was loaded in" not in caplog.text
 
 
 def test_cpu_dtype_warning_skips_parameterless_model(caplog) -> None:
     SentenceTransformer(modules=[nn.Identity()], device="cpu")
-    assert "This model loaded with" not in caplog.text
+    assert "This model was loaded in" not in caplog.text
