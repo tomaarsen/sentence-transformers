@@ -9,6 +9,7 @@ import warnings
 from collections import UserDict
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,8 +18,9 @@ import pytest
 import torch
 from huggingface_hub import CommitInfo, HfApi, RepoUrl
 from torch import Tensor, nn
+from transformers import BertConfig, BertModel, BertTokenizer
 
-from sentence_transformers import CrossEncoder, SentenceTransformer, SparseEncoder
+from sentence_transformers import CrossEncoder, MultiVectorEncoder, SentenceTransformer, SparseEncoder
 from sentence_transformers.base.evaluation import BaseEvaluator
 from sentence_transformers.base.model_card import BaseModelCardData
 from sentence_transformers.base.modules.module import Module
@@ -2029,3 +2031,72 @@ def test_private_load_with_module_classes_loads_without_trust_remote_code(tmp_pa
     assert reloaded[2].scale == 2.0
     assert reloaded.trust_remote_code is False
     reloaded.encode(["round trip"])
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize(
+    ("model_kwargs", "override_dtype"),
+    [
+        (None, None),
+        ({"dtype": "auto"}, None),
+        ({"torch_dtype": "auto"}, None),
+        ({"dtype": None}, None),
+        ({"device_map": {"": "cpu"}}, None),
+        ({"dtype": torch.float16}, torch.float16),
+        ({"dtype": "bfloat16"}, torch.bfloat16),
+        ({"torch_dtype": torch.float16}, torch.float16),
+        ({"torch_dtype": "bfloat16"}, torch.bfloat16),
+        ({"dtype": torch.float32}, torch.float32),
+        ({"dtype": None, "torch_dtype": torch.float16}, torch.float16),
+        ({"dtype": torch.float16, "torch_dtype": "auto"}, torch.float16),
+        ({"dtype": "auto", "torch_dtype": torch.float16}, None),
+    ],
+)
+def test_cpu_dtype_warning_from_checkpoint(dtype, model_kwargs, override_dtype, tmp_path: Path, caplog) -> None:
+    config = BertConfig(vocab_size=5, hidden_size=8, num_hidden_layers=1, num_attention_heads=2, intermediate_size=16)
+    BertModel(config).to(dtype).save_pretrained(tmp_path)
+    BertTokenizer(
+        vocab={token: i for i, token in enumerate(["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"])}
+    ).save_pretrained(tmp_path)
+
+    with caplog.at_level(logging.WARNING, logger="sentence_transformers.base.model"):
+        model = SentenceTransformer(str(tmp_path), device="cpu", model_kwargs=model_kwargs, local_files_only=True)
+
+    assert model.dtype == (override_dtype or dtype)
+    messages = [record.message for record in caplog.records if "This model loaded with" in record.message]
+    if dtype == torch.float32 or override_dtype is not None:
+        assert not messages
+    else:
+        assert len(messages) == 1
+        assert f"{dtype} on CPU" in messages[0]
+        assert 'model_kwargs={"dtype": torch.float32}' in messages[0]
+
+
+@pytest.mark.parametrize("model_class", [SentenceTransformer, SparseEncoder, CrossEncoder, MultiVectorEncoder])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+def test_cpu_dtype_warning_once(model_class, dtype, caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger="sentence_transformers.base.model"):
+        for _ in range(2):
+            model_class(modules=[nn.Linear(2, 2, dtype=dtype)], device="cpu")
+    assert sum("This model loaded with" in record.message for record in caplog.records) == 1
+
+
+@pytest.mark.parametrize("backend", ["onnx", "openvino"])
+def test_cpu_dtype_warning_skips_other_backends(backend, caplog) -> None:
+    SentenceTransformer(modules=[nn.Linear(2, 2, dtype=torch.float16)], device="cpu", backend=backend)
+    assert "This model loaded with" not in caplog.text
+
+
+@pytest.mark.parametrize("execution_device", ["cuda:0", "mps"])
+def test_cpu_dtype_warning_uses_execution_device(execution_device, caplog) -> None:
+    module = nn.Linear(2, 2, dtype=torch.float16)
+    module._hf_hook = SimpleNamespace(execution_device=execution_device)
+    model = SentenceTransformer(modules=[module])
+    assert next(model.parameters()).device.type == "cpu"
+    assert model.device == torch.device(execution_device)
+    assert "This model loaded with" not in caplog.text
+
+
+def test_cpu_dtype_warning_skips_parameterless_model(caplog) -> None:
+    SentenceTransformer(modules=[nn.Identity()], device="cpu")
+    assert "This model loaded with" not in caplog.text
