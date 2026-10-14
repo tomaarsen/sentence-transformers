@@ -22,7 +22,9 @@ from transformers import BertConfig, BertModel, BertTokenizer
 
 from sentence_transformers import CrossEncoder, MultiVectorEncoder, SentenceTransformer, SparseEncoder
 from sentence_transformers.base.evaluation import BaseEvaluator
+from sentence_transformers.base.model import BaseModel
 from sentence_transformers.base.model_card import BaseModelCardData
+from sentence_transformers.base.modules import Dense
 from sentence_transformers.base.modules.module import Module
 
 
@@ -2151,3 +2153,99 @@ def test_cpu_dtype_warning_skips_static_checkpoint(tmp_path: Path, caplog, clear
 def test_cpu_dtype_warning_skips_parameterless_model(caplog) -> None:
     SentenceTransformer(modules=[nn.Identity()], device="cpu")
     assert "This model was loaded in" not in caplog.text
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+@pytest.mark.parametrize("trust_remote_code", [False, True])
+def test_model_rejects_external_dense_module(tmp_path: Path, absolute: bool, trust_remote_code: bool) -> None:
+    outside_model = tmp_path / "outside_model" / "2_Dense"
+    outside_model.mkdir(parents=True)
+    Dense(4, 2, bias=False, activation_function=nn.Identity()).save(str(outside_model))
+    model = tmp_path / "model"
+    model.mkdir()
+    path = str(outside_model) if absolute else "../outside_model/2_Dense"
+    modules = [{"idx": 0, "name": "0", "path": path, "type": "sentence_transformers.models.Dense"}]
+    (model / "modules.json").write_text(json.dumps(modules))
+
+    with pytest.raises(ValueError, match="Invalid model path"):
+        SentenceTransformer(str(model), trust_remote_code=trust_remote_code, local_files_only=True, device="cpu")
+
+
+@pytest.mark.parametrize("path", ["", ".", "0_Dense", "nested/0_Dense"])
+def test_model_loads_relative_dense_module(tmp_path: Path, path: str) -> None:
+    module_path = tmp_path / path
+    module_path.mkdir(parents=True, exist_ok=True)
+    dense = Dense(4, 2, bias=False, activation_function=nn.Identity())
+    dense.save(str(module_path))
+    modules = [{"idx": 0, "name": "0", "path": path, "type": "sentence_transformers.models.Dense"}]
+    (tmp_path / "modules.json").write_text(json.dumps(modules))
+
+    model = SentenceTransformer(str(tmp_path), local_files_only=True, device="cpu")
+    inputs = torch.randn(3, 4)
+    actual = model({"sentence_embedding": inputs})["sentence_embedding"]
+    torch.testing.assert_close(actual, inputs @ dense.linear.weight.T)
+
+
+def test_model_validates_all_paths_before_resolving_classes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    modules = [
+        {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Normalize"},
+        {"idx": 1, "name": "1", "path": "../outside_model", "type": "sentence_transformers.models.Normalize"},
+    ]
+    (tmp_path / "modules.json").write_text(json.dumps(modules))
+    resolve_class = MagicMock(side_effect=AssertionError("Module class resolution must not run"))
+    monkeypatch.setattr(BaseModel, "_load_module_class_from_ref", resolve_class)
+
+    with pytest.raises(ValueError, match="Invalid model path"):
+        SentenceTransformer(str(tmp_path), local_files_only=True, device="cpu")
+    resolve_class.assert_not_called()
+
+
+@pytest.mark.parametrize("external", [False, True])
+def test_legacy_model_module_paths(tmp_path: Path, external: bool) -> None:
+    loaded_paths = []
+
+    class LegacyDense(Dense):
+        @staticmethod
+        def load(input_path):
+            loaded_paths.append(Path(input_path))
+            return Dense.load(input_path, local_files_only=True)
+
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    module_path = tmp_path / "outside_model" if external else model_path / "nested" / "dense"
+    module_path.mkdir(parents=True)
+    Dense(4, 2).save(str(module_path))
+    path = "../outside_model" if external else "nested/dense"
+    module_classes = {"test.LegacyDense": LegacyDense}
+
+    modules = [{"idx": 0, "name": "0", "path": path, "type": "test.LegacyDense"}]
+    (model_path / "modules.json").write_text(json.dumps(modules))
+
+    def load():
+        return SentenceTransformer._load_with_module_classes(
+            str(model_path), module_classes=module_classes, local_files_only=True, device="cpu"
+        )
+
+    if external:
+        with pytest.raises(ValueError, match="Invalid model path"):
+            load()
+        assert loaded_paths == []
+    else:
+        load()
+        assert loaded_paths == [module_path]
+
+
+def test_distinct_module_names_can_share_a_path(tmp_path: Path) -> None:
+    dense = Dense(2, 2, bias=False, activation_function=nn.Identity())
+    with torch.no_grad():
+        dense.linear.weight.copy_(2 * torch.eye(2))
+    dense.save(str(tmp_path))
+    modules = [
+        {"idx": index, "name": str(index), "path": "", "type": "sentence_transformers.models.Dense"}
+        for index in range(2)
+    ]
+    (tmp_path / "modules.json").write_text(json.dumps(modules))
+
+    loaded = SentenceTransformer(str(tmp_path), local_files_only=True, device="cpu")
+    actual = loaded({"sentence_embedding": torch.ones(1, 2)})["sentence_embedding"]
+    torch.testing.assert_close(actual, torch.full((1, 2), 4.0))

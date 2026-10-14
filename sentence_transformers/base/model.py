@@ -53,7 +53,7 @@ from sentence_transformers.util import (
     load_file_path,
     save_to_hub_args_decorator,
 )
-from sentence_transformers.util.file_io import _resolve_model_revision
+from sentence_transformers.util.file_io import _resolve_model_revision, _validate_relative_path
 from sentence_transformers.util.misc import ORIGINAL_TRANSFORMER_MODELS
 
 if TYPE_CHECKING:
@@ -1237,6 +1237,9 @@ This pull request has been automatically generated to add {self.__class__.__name
         )
         with open(modules_json_path, encoding="utf8") as fIn:
             modules_config = json.load(fIn)
+
+        for module_config in modules_config:
+            _validate_relative_path(module_config["path"])
 
         modules = OrderedDict()
         module_kwargs = OrderedDict()
