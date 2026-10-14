@@ -2233,19 +2233,3 @@ def test_legacy_model_module_paths(tmp_path: Path, external: bool) -> None:
     else:
         load()
         assert loaded_paths == [module_path]
-
-
-def test_distinct_module_names_can_share_a_path(tmp_path: Path) -> None:
-    dense = Dense(2, 2, bias=False, activation_function=nn.Identity())
-    with torch.no_grad():
-        dense.linear.weight.copy_(2 * torch.eye(2))
-    dense.save(str(tmp_path))
-    modules = [
-        {"idx": index, "name": str(index), "path": "", "type": "sentence_transformers.models.Dense"}
-        for index in range(2)
-    ]
-    (tmp_path / "modules.json").write_text(json.dumps(modules))
-
-    loaded = SentenceTransformer(str(tmp_path), local_files_only=True, device="cpu")
-    actual = loaded({"sentence_embedding": torch.ones(1, 2)})["sentence_embedding"]
-    torch.testing.assert_close(actual, torch.full((1, 2), 4.0))

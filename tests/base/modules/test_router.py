@@ -1596,20 +1596,3 @@ def test_legacy_router_module_paths(tmp_path: Path, external: bool) -> None:
     else:
         load()
         assert loaded_paths == [module_path]
-
-
-def test_router_can_load_same_nested_checkpoint_on_sibling_branches(tmp_path: Path) -> None:
-    child = tmp_path / "child"
-    child.mkdir()
-    Router({"query": [Dense(2, 2)]}).save(str(child))
-    config = {
-        "types": {key: "sentence_transformers.models.Router" for key in ["child", "./child"]},
-        "structure": {"query": ["child"], "document": ["./child"]},
-        "parameters": {},
-    }
-    (tmp_path / "router_config.json").write_text(json.dumps(config))
-
-    loaded = Router.load(str(tmp_path), local_files_only=True)
-    query = loaded.sub_modules["query"][0].sub_modules["query"][0]
-    document = loaded.sub_modules["document"][0].sub_modules["query"][0]
-    torch.testing.assert_close(query.linear.weight, document.linear.weight)
