@@ -186,7 +186,7 @@ def test_dense_activation_factory_requires_trust(
     config["activation_function"] = "torch.serialization.clear_safe_globals"
     config_path.write_text(json.dumps(config))
     factory = MagicMock(return_value=nn.Identity())
-    monkeypatch.setattr(torch.serialization, "clear_safe_globals", factory)
+    monkeypatch.setattr(torch.serialization, "clear_safe_globals", factory, raising=False)
 
     if trust_remote_code:
         loaded = Dense.load(str(tmp_path), local_files_only=True, trust_remote_code=True)
