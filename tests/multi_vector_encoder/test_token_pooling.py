@@ -555,6 +555,36 @@ def test_hierarchical_normalization_zero_centroid(dtype: torch.dtype) -> None:
     torch.testing.assert_close(pooling.pool([embeddings])[0], torch.zeros(1, 2, dtype=dtype))
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("dtype", [torch.float64, torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("empty_batch", [False, True])
+def test_hierarchical_batched_normalization_without_pooling(monkeypatch, device, dtype, empty_batch) -> None:
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+    embeddings = torch.randn(3, 5, 8, device=device, dtype=dtype)
+    embeddings[0, 0] = 0
+    mask = torch.tensor([[1, 1, 1, 0, 0], [0, 0, 1, 1, 1], [0, 0, 0, 0, 0]], device=device, dtype=torch.bool)
+    if empty_batch:
+        embeddings, mask = embeddings[:0], mask[:0]
+    original = embeddings.clone()
+    pooling = HierarchicalTokenPooling(1)
+    expected = pooling.pool([embedding[m] for embedding, m in zip(embeddings, mask)])
+
+    def fail_per_document_pooling(*args, **kwargs):
+        pytest.fail("No-pooling forward must normalize the batch without per-document pooling")
+
+    monkeypatch.setattr(pooling, "pool_one", fail_per_document_pooling)
+    features = {"token_embeddings": embeddings, "attention_mask": mask}
+    output = pooling(features, task="document")
+    assert output is features
+    assert output["attention_mask"] is mask
+    assert output["token_embeddings"].shape == embeddings.shape
+    assert output["token_embeddings"].dtype == dtype
+    for actual, m, reference in zip(output["token_embeddings"], mask, expected):
+        torch.testing.assert_close(actual[m], reference)
+    torch.testing.assert_close(embeddings, original, rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("normalize_embeddings", [None, False, True])
 def test_pooling_encode_and_saved_pipeline(tmp_path, normalize_embeddings: bool | None) -> None:
     pooling = (
@@ -567,7 +597,7 @@ def test_pooling_encode_and_saved_pipeline(tmp_path, normalize_embeddings: bool 
     query = model.encode_query(texts)
     expected = model.encode_document(texts, token_pooling=pooling)
     if normalize_embeddings:
-        torch.testing.assert_close(expected[0].norm(dim=-1), torch.ones(len(expected[0])))
+        torch.testing.assert_close(expected[0].norm(dim=-1), expected[0].new_ones(len(expected[0])))
     model.append(pooling)
     torch.testing.assert_close(model.encode_document(texts)[0], expected[0])
     torch.testing.assert_close(model.encode_query(texts)[0], query[0])

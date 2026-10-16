@@ -202,6 +202,13 @@ def _ward_linkage_fn() -> Callable[..., np.ndarray]:
     return linkage
 
 
+def _normalize_token_embeddings(embedding: Tensor) -> Tensor:
+    dtype = embedding.dtype
+    if dtype in (torch.float16, torch.bfloat16):
+        embedding = embedding.float()
+    return torch.nn.functional.normalize(embedding, dim=-1).to(dtype)
+
+
 def _hierarchical_pool_one(
     embedding: Tensor, pool_factor: float, num_protected_tokens: int, normalize_embeddings: bool = True
 ) -> Tensor:
@@ -240,12 +247,7 @@ def _hierarchical_pool_one(
         pooled = cluster_sums / cluster_counts.unsqueeze(1)
         embedding = torch.cat([protected, pooled.to(device)], dim=0)
 
-    if normalize_embeddings:
-        dtype = embedding.dtype
-        if dtype in (torch.float16, torch.bfloat16):
-            embedding = embedding.float()
-        embedding = torch.nn.functional.normalize(embedding, dim=-1).to(dtype)
-    return embedding
+    return _normalize_token_embeddings(embedding) if normalize_embeddings else embedding
 
 
 class HierarchicalTokenPooling(BaseTokenPooling):
@@ -308,7 +310,9 @@ class HierarchicalTokenPooling(BaseTokenPooling):
         return config
 
     def forward(self, features: dict[str, Tensor], task: str | None = None) -> dict[str, Tensor]:
-        if self.pool_factor <= 1 and not self.normalize_embeddings:
+        if self.pool_factor <= 1:
+            if self.normalize_embeddings and self.applies_to(task):
+                features["token_embeddings"] = _normalize_token_embeddings(features["token_embeddings"])
             return features
         return super().forward(features, task=task)
 
