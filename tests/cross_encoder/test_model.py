@@ -74,8 +74,8 @@ def test_load_with_revision() -> None:
     argvalues=[True, False],
     ids=["return-docs", "no-return-docs"],
 )
-def test_rank(return_documents: bool, request: FixtureRequest) -> None:
-    model = CrossEncoder("cross-encoder/stsb-distilroberta-base")
+def test_rank(return_documents: bool, reranker_bert_tiny_model: CrossEncoder) -> None:
+    model = reranker_bert_tiny_model
     # We want to compute the similarity between the query sentence
     query = "A man is eating pasta."
 
@@ -91,15 +91,19 @@ def test_rank(return_documents: bool, request: FixtureRequest) -> None:
         "A monkey is playing drums.",
         "A cheetah is running behind its prey.",
     ]
-    expected_ranking = [0, 1, 3, 6, 2, 5, 7, 4, 8]
+    scores = model.predict([(query, document) for document in corpus])
+    expected_ranking = [1, 0, 5, 4, 2, 6, 8, 7, 3]
 
     # 1. We rank all sentences in the corpus for the query
     ranks = model.rank(query=query, documents=corpus, return_documents=return_documents)
-    if request.node.callspec.id == "return-docs":
-        assert {*corpus} == {rank.get("text") for rank in ranks}
+    if return_documents:
+        assert [rank["text"] for rank in ranks] == [corpus[index] for index in expected_ranking]
+    else:
+        assert all("text" not in rank for rank in ranks)
 
     pred_ranking = [rank["corpus_id"] for rank in ranks]
     assert pred_ranking == expected_ranking
+    np.testing.assert_allclose([rank["score"] for rank in ranks], scores[expected_ranking])
 
 
 def test_rank_scores_are_floats(reranker_bert_tiny_model: CrossEncoder) -> None:
@@ -133,8 +137,8 @@ def test_rank_apply_softmax_deprecated(reranker_bert_tiny_model: CrossEncoder, a
     assert ranks == expected
 
 
-def test_rank_multiple_labels(nli_minilm_model: CrossEncoder):
-    model = nli_minilm_model
+def test_rank_multiple_labels(multiclass_bert_tiny_model: CrossEncoder):
+    model = multiclass_bert_tiny_model
     with pytest.raises(
         ValueError,
         match=re.escape(
@@ -152,8 +156,8 @@ def test_rank_multiple_labels(nli_minilm_model: CrossEncoder):
         )
 
 
-def test_predict_softmax(nli_minilm_model: CrossEncoder, caplog):
-    model = nli_minilm_model
+def test_predict_softmax(multiclass_bert_tiny_model: CrossEncoder, caplog):
+    model = multiclass_bert_tiny_model
     query = "A man is eating pasta."
 
     # With all sentences in the corpus
@@ -207,7 +211,7 @@ def test_predict_low_precision_logits_upcast_to_float32(reranker_bert_tiny_model
     assert torch.allclose(scores, reference, atol=1e-2)
 
 
-@pytest.mark.parametrize("model_fixture", ["reranker_bert_tiny_model", "nli_minilm_model"])
+@pytest.mark.parametrize("model_fixture", ["reranker_bert_tiny_model", "multiclass_bert_tiny_model"])
 def test_predict_single_input(model_fixture: str, request: FixtureRequest):
     model = request.getfixturevalue(model_fixture)
     nested_pair_score = model.predict([["A man is eating pasta.", "A man is eating food."]])
@@ -817,14 +821,26 @@ def test_default_activation_fn(reranker_bert_tiny_model: CrossEncoder):
     torch.testing.assert_close(activation(scores), torch.sigmoid(scores))
 
 
-def test_bge_reranker_max_length():
-    model = CrossEncoder("BAAI/bge-reranker-base")
-    assert model.max_length == 512
-    assert model.tokenizer.model_max_length == 512
+@pytest.mark.parametrize("tokenizer_max_length, expected_max_length", [(256, 256), (512, 512), (1024, 512)])
+def test_max_length(
+    reranker_bert_tiny_model: CrossEncoder, tmp_path: Path, tokenizer_max_length: int, expected_max_length: int
+) -> None:
+    reranker_bert_tiny_model.model.save_pretrained(tmp_path)
+    reranker_bert_tiny_model.tokenizer.model_max_length = tokenizer_max_length
+    reranker_bert_tiny_model.tokenizer.save_pretrained(tmp_path)
 
-    model.max_length = 256
-    assert model.max_length == 256
-    assert model.tokenizer.model_max_length == 256
+    model = CrossEncoder(str(tmp_path), local_files_only=True)
+    assert model.max_seq_length == expected_max_length
+    assert model.tokenizer.model_max_length == expected_max_length
+    with pytest.warns(DeprecationWarning, match="max_length"):
+        assert model.max_length == expected_max_length
+
+    with pytest.warns(DeprecationWarning, match="max_length"):
+        model.max_length = 128
+    with pytest.warns(DeprecationWarning, match="max_length"):
+        assert model.max_length == 128
+    assert model.max_seq_length == 128
+    assert model.tokenizer.model_max_length == 128
 
 
 def test_predict_with_dataset_column(reranker_bert_tiny_model: CrossEncoder) -> None:

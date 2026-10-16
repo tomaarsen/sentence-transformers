@@ -2277,9 +2277,9 @@ class TestConditionalFlattening:
     """Test that preprocess only flattens text-only inputs, even when can_flatten_inputs is True."""
 
     @pytest.fixture()
-    def flatten_ready_transformer(self):
+    def flatten_ready_transformer(self, bert_tiny_transformer):
         """A BERT transformer with can_flatten_inputs=True and a mock data_collator."""
-        transformer = Transformer(TINY_BERT)
+        transformer = bert_tiny_transformer
         transformer.can_flatten_inputs = True
         transformer._flatten_position_offset = transformer._infer_flatten_position_offset()
         transformer.data_collator = MagicMock(
@@ -2292,9 +2292,9 @@ class TestConditionalFlattening:
         flatten_ready_transformer.preprocess(["hello world", "another sentence"])
         flatten_ready_transformer.data_collator.assert_called_once()
 
-    def test_text_inputs_not_flattened_when_disabled(self):
+    def test_text_inputs_not_flattened_when_disabled(self, bert_tiny_transformer):
         """Text inputs should NOT be flattened when can_flatten_inputs is False."""
-        transformer = Transformer(TINY_BERT)
+        transformer = bert_tiny_transformer
         assert transformer.can_flatten_inputs is False
         transformer.data_collator = MagicMock()
         transformer.preprocess(["hello world"])

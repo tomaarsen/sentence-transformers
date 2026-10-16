@@ -1599,11 +1599,11 @@ def test_verbose_mode(
 
 
 @pytest.mark.skipif(not is_datasets_available(), reason="datasets library is not available")
-def test_mine_hard_negatives_with_prompt(paraphrase_distilroberta_base_v1_model: SentenceTransformer) -> None:
+def test_mine_hard_negatives_with_prompt(stsb_bert_tiny_model: SentenceTransformer) -> None:
     """
     Tests that mine_hard_negatives runs with and without a prompt.
     """
-    model = paraphrase_distilroberta_base_v1_model
+    model = stsb_bert_tiny_model
     # 1. Create a test dataset
     data = {
         "anchor": [
