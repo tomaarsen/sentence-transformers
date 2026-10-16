@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
-import torch
+import torch.nn.functional as F
 from torch import Tensor
 
 from sentence_transformers.sentence_transformer.model import SentenceTransformer
@@ -108,7 +108,14 @@ class BatchHardSoftMarginTripletLoss(BatchHardTripletLoss):
         Returns:
             Label_Sentence_Triplet: scalar tensor containing the triplet loss
         """
-        # Get the pairwise distance matrix
+        batch_size = embeddings.shape[0]
+        if labels.numel() != batch_size:
+            raise ValueError(
+                f"{self.__class__.__name__} expects {batch_size} labels (one per example), "
+                f"but got {labels.numel()} labels with shape {tuple(labels.shape)}."
+            )
+        labels = labels.view(-1)
+
         pairwise_dist = self.distance_metric(embeddings)
 
         # For each anchor, get the hardest positive
@@ -135,7 +142,7 @@ class BatchHardSoftMarginTripletLoss(BatchHardTripletLoss):
         # Combine biggest d(a, p) and smallest d(a, n) into final triplet loss with soft margin
         # tl = hardest_positive_dist - hardest_negative_dist + margin
         # tl[tl < 0] = 0
-        tl = torch.log1p(torch.exp(hardest_positive_dist - hardest_negative_dist))
+        tl = F.softplus(hardest_positive_dist - hardest_negative_dist)
         triplet_loss = tl.mean()
 
         return triplet_loss

@@ -10,12 +10,13 @@ import pytest
 import torch
 from packaging.version import parse as parse_version
 from tokenizers.processors import TemplateProcessing
-from torch.utils.data import ConcatDataset
+from torch.utils.data import ConcatDataset, DataLoader
 from transformers import __version__ as transformers_version
 from transformers.trainer_utils import EvalLoopOutput
 
 from sentence_transformers import SentenceTransformer, SentenceTransformerTrainer
 from sentence_transformers.base.sampler import (
+    BatchSamplers,
     DefaultBatchSampler,
     GroupByLabelBatchSampler,
     NoDuplicatesBatchSampler,
@@ -24,7 +25,13 @@ from sentence_transformers.base.sampler import (
     SubsetRandomSampler,
 )
 from sentence_transformers.sentence_transformer.evaluation import EmbeddingSimilarityEvaluator
-from sentence_transformers.sentence_transformer.losses import CosineSimilarityLoss, MultipleNegativesRankingLoss
+from sentence_transformers.sentence_transformer.losses import (
+    CachedMultipleNegativesRankingLoss,
+    CosineSimilarityLoss,
+    MultipleNegativesRankingLoss,
+    SoftmaxLoss,
+)
+from sentence_transformers.sentence_transformer.readers import InputExample
 from sentence_transformers.sentence_transformer.training_args import SentenceTransformerTrainingArguments
 from sentence_transformers.util import is_datasets_available, is_training_available
 
@@ -823,6 +830,36 @@ def test_trainer_get_batch_sampler_class(
     assert isinstance(batch_sampler, NoDuplicatesBatchSampler)
 
 
+@pytest.mark.parametrize(
+    ("batch_sampler", "multi_dataset"),
+    [
+        (BatchSamplers.NO_DUPLICATES, False),
+        (BatchSamplers.GROUP_BY_LABEL, False),
+        (BatchSamplers.NO_DUPLICATES, True),
+    ],
+)
+def test_trainer_batch_sampler_uses_args_seed(
+    stsb_bert_tiny_model: SentenceTransformer, batch_sampler: BatchSamplers, multi_dataset: bool
+) -> None:
+    """Changing ``args.seed`` should change the batch order, as it does for the default batch sampler."""
+    train_dataset = Dataset.from_dict(
+        {"sentence": [f"sentence {i}" for i in range(64)], "label": [i % 4 for i in range(64)]}
+    )
+    if multi_dataset:
+        train_dataset = DatasetDict({"a": train_dataset, "b": train_dataset})
+
+    def get_batches(seed: int) -> list[list[int]]:
+        args = SentenceTransformerTrainingArguments(
+            output_dir="dummy", seed=seed, batch_sampler=batch_sampler, per_device_train_batch_size=8
+        )
+        trainer = SentenceTransformerTrainer(model=stsb_bert_tiny_model, args=args, train_dataset=train_dataset)
+        # Only the batches of the first dataset, as the multi-dataset sampler reorders datasets by itself
+        return [batch for batch in trainer.get_train_dataloader().batch_sampler if max(batch) < 64]
+
+    assert get_batches(1) == get_batches(1)
+    assert get_batches(1) != get_batches(2)
+
+
 def test_trainer_get_batch_sampler_function(
     stsb_bert_tiny_model: SentenceTransformer, stsb_dataset_dict: DatasetDict
 ) -> None:
@@ -1195,3 +1232,54 @@ def test_trainer_evaluate_caches_eval_dataloaders_per_dataset(
         assert seen["eval_first"][0] is not seen["eval_first"][1]
         assert seen["eval_second"][0] is not seen["eval_second"][1]
         assert trainer._eval_dataloaders == {}
+
+
+@pytest.mark.parametrize("compile_before_loss", [False, True])
+def test_trainer_compiled_model_with_cached_loss(
+    stsb_bert_tiny_model: SentenceTransformer, compile_before_loss: bool
+) -> None:
+    model = stsb_bert_tiny_model
+    if compile_before_loss:
+        model = torch.compile(model, backend="eager")
+    loss = CachedMultipleNegativesRankingLoss(model=model, mini_batch_size=2)
+    if not compile_before_loss:
+        model = torch.compile(model, backend="eager")
+    SentenceTransformerTrainer(model=model, loss=loss)
+
+
+@pytest.mark.parametrize("use_fit", [False, True], ids=["trainer", "fit"])
+def test_training_updates_loss_weights(stsb_bert_tiny_model, tmp_path, monkeypatch, use_fit: bool) -> None:
+    model = stsb_bert_tiny_model
+    loss = SoftmaxLoss(model, model.get_embedding_dimension(), num_labels=3)
+    classifier_weight = loss.classifier.weight.detach().clone()
+    dataset = Dataset.from_dict(
+        {
+            "sentence1": [f"This is sentence {idx}" for idx in range(16)],
+            "sentence2": [f"This is another sentence {idx}" for idx in range(16)],
+            "label": [idx % 3 for idx in range(16)],
+        }
+    )
+
+    if use_fit:
+        monkeypatch.chdir(tmp_path)
+        examples = [InputExample(texts=[row["sentence1"], row["sentence2"]], label=row["label"]) for row in dataset]
+        model.fit(
+            train_objectives=[(DataLoader(examples, batch_size=4), loss)],
+            epochs=1,
+            warmup_steps=0,
+            show_progress_bar=False,
+        )
+    else:
+        args = SentenceTransformerTrainingArguments(
+            output_dir=str(tmp_path),
+            num_train_epochs=1,
+            per_device_train_batch_size=4,
+            save_strategy="no",
+            report_to=[],
+            disable_tqdm=True,
+        )
+        trainer = SentenceTransformerTrainer(model=model, args=args, train_dataset=dataset, loss=loss)
+        trainer.train()
+
+    assert not torch.equal(loss.classifier.weight.detach(), classifier_weight)
+    assert all(parameter.grad is None for parameter in loss.parameters())

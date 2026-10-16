@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import string
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from multiprocessing import Queue
 from typing import Any, ClassVar, Literal, overload
 
 import numpy as np
@@ -24,9 +22,10 @@ from sentence_transformers.base.modules import Normalize, Transformer
 from sentence_transformers.base.modules.dense import Dense
 from sentence_transformers.multi_vector_encoder.model_card import MultiVectorEncoderModelCardData
 from sentence_transformers.multi_vector_encoder.modules import BaseTokenPooling, MultiVectorMask
-from sentence_transformers.util import _move_tensors_to_cpu, batch_to_device, load_file_path
+from sentence_transformers.util import batch_to_device, load_file_path
 from sentence_transformers.util.misc import import_from_string
 from sentence_transformers.util.similarity import SimilarityFunction
+from sentence_transformers.util.tensor import _tensor_to_numpy
 
 logger = transformers_logging.get_logger(__name__)
 
@@ -90,7 +89,9 @@ class MultiVectorEncoder(BaseModel):
             modeling files. Defaults to False.
         revision (str, optional): The specific model version to use. Defaults to None.
         local_files_only (bool, optional): Whether to only look at local files. Defaults to False.
-        token (bool or str, optional): Hugging Face authentication token. Defaults to None.
+        token (bool or str, optional): Hugging Face authentication token for higher Hub rate limits and access to
+            private or gated models your account can read. Defaults to None, which uses ``HF_TOKEN`` or
+            credentials saved with ``hf auth login``, if available.
         model_kwargs (dict[str, Any], optional): Keyword arguments passed to the underlying Hugging Face
             Transformers model. Defaults to None.
         processor_kwargs (dict[str, Any], optional): Keyword arguments passed to the Hugging Face Transformers
@@ -367,12 +368,12 @@ class MultiVectorEncoder(BaseModel):
         token_pooling: BaseTokenPooling | None = None,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]:
-        """Compute query embeddings. Uses the "query" prompt if available and routes through the query side.
+        """Compute query embeddings. Uses the "query" prompt and routes through the query side.
 
         See :meth:`encode` for the full parameter documentation. This method differs only by:
 
-        1. If no ``prompt_name`` or ``prompt`` is provided, it uses the predefined ``"query"`` prompt when one
-           exists in the model's ``prompts`` dictionary.
+        1. If no ``prompt_name`` or ``prompt`` is provided, it uses the ``"query"`` prompt from the model's
+           ``prompts`` dictionary. This defaults to an empty string, which prevents fallback to ``default_prompt_name``.
         2. It sets the ``task`` to ``"query"``: the query prefix token is inserted, the max sequence length is
            ``query_length``, and (when ``query_expansion`` is set) the input is extended with expansion tokens.
         """
@@ -759,7 +760,9 @@ class MultiVectorEncoder(BaseModel):
                 multiples on an accelerator. Set it for corpora too large to keep in device memory.
                 Multi-process encoding (a ``pool``, or a list of ``device``s) always returns on the CPU,
                 since embeddings are moved there to cross the process boundary.
-            device (str, torch.device, list, or None): Device(s) for computation. Defaults to None.
+            device (str, torch.device, list, or None): Device(s) for computation. A single device moves the
+                model there unless a `device_map` or Accelerate hooks control placement, a list uses multi-process encoding, and
+                None uses the model's current device. Defaults to None.
             normalize_embeddings (bool, optional): If True, L2-normalize each per-token embedding after
                 the pipeline and before per-call token pooling. Use this when the loaded pipeline does
                 not include a :class:`Normalize` module but you still want unit-norm vectors. Defaults to False.
@@ -781,8 +784,6 @@ class MultiVectorEncoder(BaseModel):
             (including each input's real ``attention_mask``). If a single string is passed, the outer list
             is unwrapped (e.g. a bare 2D tensor for the default).
         """
-        is_query = task == "query"
-
         if show_progress_bar is None:
             show_progress_bar = logger.getEffectiveLevel() in (logging.INFO, logging.DEBUG)
 
@@ -821,35 +822,56 @@ class MultiVectorEncoder(BaseModel):
                 f"this model does not use: {list(unused_kwargs)}."
             )
 
-        if pool is not None or (isinstance(device, list) and len(device) > 0):
-            embeddings = self._multi_process(
-                inputs=inputs,
-                show_progress_bar=show_progress_bar,
-                pool=pool,
-                device=device,
-                chunk_size=chunk_size,
-                prompt_name=prompt_name,
-                prompt=prompt,
-                batch_size=batch_size,
-                output_value=output_value,
-                convert_to_numpy=convert_to_numpy,
-                normalize_embeddings=normalize_embeddings,
-                token_pooling=token_pooling,
-                task=task,
-                **kwargs,
-            )
-            if is_singular_input:
-                embeddings = embeddings[0]
-            return embeddings
-
         prompt = self._resolve_prompt(prompt, prompt_name)
 
-        if device is None:
-            device = self.device
-        self.to(device)
+        inference_kwargs = dict(
+            prompt=prompt,
+            batch_size=batch_size,
+            show_progress_bar=show_progress_bar,
+            output_value=output_value,
+            save_to_cpu=convert_to_numpy,
+            normalize_embeddings=normalize_embeddings,
+            token_pooling=token_pooling,
+            task=task,
+            **kwargs,
+        )
+        use_multi_process = pool is not None or (isinstance(device, list) and len(device) > 0)
+        if use_multi_process:
+            result = self._multi_process(inputs, pool=pool, device=device, chunk_size=chunk_size, **inference_kwargs)
+        elif self._distributed_inference is not None and device is None:
+            result = self._distributed_inference(inputs, **inference_kwargs)
+        else:
+            result = self._inference(inputs, device=device, **inference_kwargs)
+
+        if convert_to_numpy:
+            result = [_tensor_to_numpy(emb) for emb in result]
+
+        if is_singular_input:
+            result = result[0]
+
+        return result
+
+    def _inference(
+        self,
+        inputs: list,
+        *,
+        prompt: str | None,
+        batch_size: int,
+        show_progress_bar: bool,
+        output_value: str | None,
+        save_to_cpu: bool,
+        normalize_embeddings: bool,
+        token_pooling: BaseTokenPooling | None,
+        task: str | None,
+        device: str | torch.device | None = None,
+        **kwargs,
+    ) -> list[Tensor] | list[dict[str, Any]]:
+        """Run local inference on normalized inputs with resolved arguments."""
+        is_query = task == "query"
+
+        device = self._resolve_inference_device(device)
         self.eval()
 
-        # Element type depends on output_value / convert flags: Tensor, ndarray, or feature dict.
         all_embeddings: list[Any] = []
         length_sorted_idx = np.argsort([-self._input_length(sen) for sen in inputs])
         inputs_sorted = [inputs[idx] for idx in length_sorted_idx]
@@ -907,7 +929,7 @@ class MultiVectorEncoder(BaseModel):
                     )
                 batch_embeddings = token_pooling.pool(batch_embeddings, task=task)
 
-            if convert_to_numpy:
+            if save_to_cpu:
                 batch_embeddings = [emb.cpu() for emb in batch_embeddings]
 
             all_embeddings.extend(batch_embeddings)
@@ -915,20 +937,7 @@ class MultiVectorEncoder(BaseModel):
         # Restore original order
         all_embeddings = [all_embeddings[idx] for idx in np.argsort(length_sorted_idx)]
 
-        if convert_to_numpy:
-            all_embeddings = [
-                emb.float().cpu().numpy()
-                if isinstance(emb, Tensor) and emb.dtype == torch.bfloat16
-                else (emb.cpu().numpy() if isinstance(emb, Tensor) else emb)
-                for emb in all_embeddings
-            ]
-
-        result = all_embeddings
-
-        if is_singular_input:
-            result = result[0]
-
-        return result
+        return all_embeddings
 
     @property
     def similarity_fn_name(self) -> Literal["maxsim", "meanmaxsim"]:
@@ -1576,67 +1585,6 @@ class MultiVectorEncoder(BaseModel):
             if callable(method):
                 return method()
         return None
-
-    def _multi_process(
-        self,
-        inputs: Sequence[SingleInput],
-        show_progress_bar: bool | None = True,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = None,
-        device: str | torch.device | list[str | torch.device] | None = None,
-        chunk_size: int | None = None,
-        **encode_kwargs,
-    ) -> list[Tensor] | list[np.ndarray]:
-        encode_kwargs["show_progress_bar"] = False
-        created_pool = False
-        if pool is None and isinstance(device, list):
-            pool = self.start_multi_process_pool(device)
-            created_pool = True
-        try:
-            if chunk_size is None:
-                chunk_size = min(math.ceil(len(inputs) / len(pool["processes"]) / 10), 5000)
-                chunk_size = max(chunk_size, 1)
-
-            input_queue: Queue = pool["input"]
-            output_queue: Queue = pool["output"]
-
-            num_chunks = math.ceil(len(inputs) / chunk_size)
-            for chunk_id in range(num_chunks):
-                start = chunk_id * chunk_size
-                input_queue.put([chunk_id, inputs[start : start + chunk_size], encode_kwargs])
-
-            output_list = sorted(
-                [output_queue.get() for _ in trange(num_chunks, desc="Chunks", disable=not show_progress_bar)],
-                key=lambda x: x[0],
-            )
-
-            for _, result in output_list:
-                if isinstance(result, Exception):
-                    raise result
-
-            embeddings: list[Tensor | np.ndarray] = []
-            for _, chunk_result in output_list:
-                if isinstance(chunk_result, list):
-                    embeddings.extend(chunk_result)
-                else:
-                    embeddings.append(chunk_result)
-            return embeddings
-        finally:
-            if created_pool:
-                self.stop_multi_process_pool(pool)
-
-    @staticmethod
-    def _multi_process_worker(
-        target_device: str, model: MultiVectorEncoder, input_queue: Queue, results_queue: Queue
-    ) -> None:
-        while True:
-            chunk_id, inputs, kwargs = input_queue.get()
-            try:
-                embeddings = model.encode(inputs, device=target_device, **kwargs)
-                embeddings = _move_tensors_to_cpu(embeddings)
-            except Exception as exc:
-                results_queue.put(MultiVectorEncoder._report_worker_failure(chunk_id, exc, target_device))
-            else:
-                results_queue.put([chunk_id, embeddings])
 
     def _push_to_hub_usage_tip(self, repo_id: str) -> str:
         class_name = self.__class__.__name__

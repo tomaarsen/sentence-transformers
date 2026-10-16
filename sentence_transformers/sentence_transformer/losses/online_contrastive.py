@@ -80,6 +80,13 @@ class OnlineContrastiveLoss(nn.Module):
         return self.compute_loss_from_embeddings(embeddings, labels)
 
     def compute_loss_from_embeddings(self, embeddings: list[Tensor], labels: Tensor) -> Tensor:
+        batch_size = embeddings[0].shape[0]
+        if labels.numel() != batch_size:
+            raise ValueError(
+                f"{self.__class__.__name__} expects {batch_size} labels (one per example), "
+                f"but got {labels.numel()} labels with shape {tuple(labels.shape)}."
+            )
+        labels = labels.view(-1)
         if not self._checked_labels:
             self._checked_labels = True
             if labels.ne(0).logical_and(labels.ne(1)).any().item():
@@ -95,8 +102,8 @@ class OnlineContrastiveLoss(nn.Module):
         poss = distance_matrix[labels == 1]
 
         # select hard positive and hard negative pairs
-        negative_pairs = negs[negs < (poss.max() if len(poss) > 1 else negs.mean())]
-        positive_pairs = poss[poss > (negs.min() if len(negs) > 1 else poss.mean())]
+        negative_pairs = negs[negs < (poss.max() if len(poss) else negs.mean())]
+        positive_pairs = poss[poss > (negs.min() if len(negs) else poss.mean())]
 
         positive_loss = positive_pairs.pow(2).sum()
         negative_loss = F.relu(self.margin - negative_pairs).pow(2).sum()

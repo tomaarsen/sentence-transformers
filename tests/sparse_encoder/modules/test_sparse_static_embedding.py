@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import torch
@@ -62,3 +63,18 @@ def test_sparse_static_embedding_save_load(
     assert torch.allclose(model[0].sub_modules.query[0].weight, loaded_model[0].sub_modules.query[0].weight), (
         "SparseStaticEmbedding weights changed after save and load"
     )
+
+
+def test_sparse_static_embedding_from_json_partial_vocabulary(
+    splade_bert_tiny_model: SparseEncoder, tmp_path: Path
+) -> None:
+    tokenizer = splade_bert_tiny_model.tokenizer
+    idf_path = tmp_path / "idf.json"
+    idf_path.write_text(json.dumps({"paris": 3.1, "capital": 2.4, "france": 2.9}), encoding="utf-8")
+
+    module = SparseStaticEmbedding.from_json(str(idf_path), tokenizer=tokenizer, frozen=True)
+    assert module.get_embedding_dimension() == len(tokenizer.get_vocab())
+
+    embeddings = module(module.preprocess(["capital", "zebra"]))["sentence_embedding"]
+    assert embeddings[0, tokenizer.convert_tokens_to_ids("capital")] == 2.4
+    assert embeddings[1].count_nonzero() == 0
