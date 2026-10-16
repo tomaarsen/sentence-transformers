@@ -340,11 +340,13 @@ class TestUseCache:
 
     @pytest.mark.parametrize("use_cache", [False, True])
     def test_nested_audio_config(self, use_cache):
-        config = PretrainedConfig()
-        config.sub_configs = {"audio_config": PretrainedConfig}
-        config.audio_config = PretrainedConfig()
-        config.audio_config.sub_configs = {"codec_config": MimiConfig}
-        config.audio_config.codec_config = MimiConfig(use_cache=True)
+        class AudioConfig(PretrainedConfig):
+            sub_configs = {"codec_config": MimiConfig}
+
+        class CompositeConfig(PretrainedConfig):
+            sub_configs = {"audio_config": AudioConfig}
+
+        config = CompositeConfig(audio_config=AudioConfig(codec_config=MimiConfig(use_cache=True)))
         Transformer._configure_use_cache(config, {"use_cache": use_cache})
         assert config.audio_config.codec_config.use_cache is use_cache
         assert not hasattr(config, "use_cache")
@@ -403,7 +405,6 @@ class TestWarnOnUnsupportedAttentionConfig:
         self,
         caplog,
         monkeypatch,
-        bert_tiny_transformer,
         param,
         value,
         support_flag,
@@ -413,14 +414,17 @@ class TestWarnOnUnsupportedAttentionConfig:
         expect_warn,
     ):
         monkeypatch.setattr(transformer_module, support_flag, supports)
-        config = bert_tiny_transformer.config
+        config = PretrainedConfig()
         if set_on == "main":
             setattr(config, param, value)
         elif set_on == "sub":
-            sub = deepcopy(config)
+
+            class CompositeConfig(PretrainedConfig):
+                sub_configs = {"text_config": PretrainedConfig}
+
+            sub = PretrainedConfig()
             setattr(sub, param, value)
-            config.sub_configs = {"text_config": type(sub)}
-            config.text_config = sub
+            config = CompositeConfig(text_config=sub)
 
         with caplog.at_level(logging.WARNING):
             Transformer._warn_on_unsupported_attention_config(config)
