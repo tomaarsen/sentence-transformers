@@ -81,6 +81,12 @@ class MSEEvaluator(BaseEvaluator):
         truncate_dim: int | None = None,
     ):
         super().__init__()
+        if len(source_sentences) != len(target_sentences):
+            raise ValueError(
+                "source_sentences and target_sentences must have the same length, "
+                f"but got {len(source_sentences)} and {len(target_sentences)}."
+            )
+
         self.truncate_dim = truncate_dim
         self.target_sentences = target_sentences
         self.show_progress_bar = show_progress_bar
