@@ -556,6 +556,27 @@ def test_hierarchical_normalization_zero_centroid(dtype: torch.dtype) -> None:
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("normalize_embeddings", [False, True])
+def test_hierarchical_single_cluster_skips_clustering(monkeypatch, device, dtype, normalize_embeddings) -> None:
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("CUDA is not available")
+
+    def fail_clustering(*args, **kwargs):
+        pytest.fail("A single cluster must not require hierarchical clustering")
+
+    monkeypatch.setattr(
+        "sentence_transformers.multi_vector_encoder.modules.token_pooling._ward_linkage_fn", fail_clustering
+    )
+    embeddings = torch.tensor([[0.0, 0.5], [1.0, 0.0], [0.0, 1.0]], device=device, dtype=dtype)
+    expected = torch.tensor([[0.0, 0.5], [0.5, 0.5]], device=device, dtype=dtype)
+    if normalize_embeddings:
+        expected = torch.nn.functional.normalize(expected.float(), dim=-1).to(dtype)
+    pooling = HierarchicalTokenPooling(2, num_protected_tokens=1, normalize_embeddings=normalize_embeddings)
+    torch.testing.assert_close(pooling.pool([embeddings])[0], expected)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
 @pytest.mark.parametrize("dtype", [torch.float64, torch.float32, torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("empty_batch", [False, True])
 def test_hierarchical_batched_normalization_without_pooling(monkeypatch, device, dtype, empty_batch) -> None:

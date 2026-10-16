@@ -226,7 +226,9 @@ def _hierarchical_pool_one(
     num_to_pool = len(to_pool)
     num_clusters = max(int(num_to_pool // pool_factor), 1)
 
-    if num_clusters < num_to_pool:
+    if num_clusters == 1 and num_to_pool > 1:
+        embedding = torch.cat([protected, to_pool.mean(dim=0, keepdim=True)], dim=0)
+    elif num_clusters < num_to_pool:
         to_pool = to_pool.cpu()
         # Detach: clustering only picks assignments, gradients flow through the cluster means below.
         to_pool_fp32 = to_pool.detach().float()
