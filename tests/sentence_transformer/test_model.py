@@ -327,6 +327,24 @@ def test_load_local_without_normalize_directory(stsb_bert_tiny_model: SentenceTr
         assert isinstance(fresh_tiny_model, SentenceTransformer)
 
 
+def test_load_local_with_normalize_at_model_root(stsb_bert_tiny_model: SentenceTransformer, tmp_path: Path) -> None:
+    model = stsb_bert_tiny_model
+    model.add_module("Normalize", Normalize())
+    sentences = ["This is a test sentence", "This is another test sentence"]
+    embeddings = model.encode(sentences, convert_to_tensor=True)
+    model.save(str(tmp_path))
+
+    shutil.rmtree(tmp_path / "2_Normalize")
+    modules_path = tmp_path / "modules.json"
+    modules_config = json.loads(modules_path.read_text(encoding="utf-8"))
+    modules_config[-1]["path"] = ""
+    modules_path.write_text(json.dumps(modules_config), encoding="utf-8")
+
+    loaded_model = SentenceTransformer(str(tmp_path), local_files_only=True)
+    assert isinstance(loaded_model[-1], Normalize)
+    assert torch.equal(embeddings, loaded_model.encode(sentences, convert_to_tensor=True))
+
+
 def test_prompts(stsb_bert_tiny_model: SentenceTransformer, caplog: pytest.LogCaptureFixture) -> None:
     model = stsb_bert_tiny_model
     assert model.prompts == {"query": "", "document": ""}
