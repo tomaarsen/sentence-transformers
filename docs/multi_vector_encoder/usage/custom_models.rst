@@ -67,6 +67,8 @@ To reproduce the full classic recipe, initialize the modules explicitly::
 An optional :class:`~sentence_transformers.multi_vector_encoder.modules.HierarchicalTokenPooling`
 module can be appended after ``Normalize`` to bake document token pooling into the checkpoint.
 
+MultiVectorEncoder models also support ``keep_in_fp32_modules`` to compute selected linear layers, such as a Dense projection, in fp32. See :ref:`fp32-modules` in the CrossEncoder guide for configuration and behavior. This setting does not control the final MaxSim calculation.
+
 What Released Checkpoints Configure
 -----------------------------------
 

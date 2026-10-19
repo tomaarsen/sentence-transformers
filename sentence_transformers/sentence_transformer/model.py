@@ -105,6 +105,10 @@ class SentenceTransformer(BaseModel, FitMixin):
             when saving the model. If not set, a default model card data object is created. Defaults to None.
         backend (str, optional): The backend to use for inference. Can be ``"torch"`` (default), ``"onnx"``,
             or ``"openvino"``. Defaults to ``"torch"``.
+        keep_in_fp32_modules (list[str], optional): Paths to plain linear layers that compute and return
+            fp32, including under autocast. Parameter storage is unchanged. None inherits the saved
+            selection, or selects nothing for a model without one. Pass [] to disable a saved selection.
+            See :meth:`~sentence_transformers.base.model.BaseModel.set_keep_in_fp32_modules`.
         similarity_fn_name (str or SimilarityFunction, optional): The name of the similarity function to use.
             Valid options are ``"cosine"``, ``"dot"``, ``"euclidean"``, and ``"manhattan"``. If not set, it is
             automatically set to ``"cosine"`` when :meth:`similarity` or :meth:`similarity_pairwise` are first
@@ -170,6 +174,7 @@ class SentenceTransformer(BaseModel, FitMixin):
         config_kwargs: dict[str, Any] | None = None,
         model_card_data: SentenceTransformerModelCardData | None = None,
         backend: Literal["torch", "onnx", "openvino"] = "torch",
+        keep_in_fp32_modules: list[str] | None = None,
         # SentenceTransformer-specific args
         similarity_fn_name: Literal["cosine", "dot", "euclidean", "manhattan"] | SimilarityFunction | None = None,
         truncate_dim: int | None = None,
@@ -204,6 +209,7 @@ class SentenceTransformer(BaseModel, FitMixin):
             config_kwargs=config_kwargs,
             model_card_data=model_card_data,
             backend=backend,
+            keep_in_fp32_modules=keep_in_fp32_modules,
             prompts=prompts,
             default_prompt_name=default_prompt_name,
         )

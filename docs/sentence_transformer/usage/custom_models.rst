@@ -133,6 +133,8 @@ Loading Sentence Transformer Models
 
 To load a Sentence Transformer model from a saved model directory, the ``modules.json`` is read to determine the modules that make up the model. Each module is initialized with the configuration stored in the corresponding module directory, after which the SentenceTransformer class is instantiated with the loaded modules.
 
+Sentence Transformer models also support ``keep_in_fp32_modules`` to compute selected linear layers in fp32. For example, use ``keep_in_fp32_modules=["2.linear", "3.linear"]`` for the two Dense projections in EmbeddingGemma-300m. See :ref:`fp32-modules` in the CrossEncoder guide for configuration and behavior. This setting does not control the final embedding similarity calculation.
+
 Declaring Version Requirements
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

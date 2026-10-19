@@ -55,6 +55,7 @@ from sentence_transformers.util import (
 )
 from sentence_transformers.util.file_io import _resolve_model_revision, _validate_relative_path
 from sentence_transformers.util.misc import ORIGINAL_TRANSFORMER_MODELS
+from sentence_transformers.util.precision import _Float32Linear
 
 if TYPE_CHECKING:
     from accelerate.hooks import ModelHook
@@ -117,6 +118,7 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         config_kwargs: dict[str, Any] | None = None,
         model_card_data: CardData | None = None,
         backend: Literal["torch", "onnx", "openvino"] = "torch",
+        keep_in_fp32_modules: list[str] | None = None,
     ) -> None:
         """
         Initialize a BaseModel instance.
@@ -187,7 +189,12 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
                 object is created. Defaults to None.
             backend (str, optional): The backend to use for inference. Can be ``"torch"`` (default), ``"onnx"``,
                 or ``"openvino"``. Defaults to ``"torch"``.
+            keep_in_fp32_modules (list[str], optional): Paths to plain linear layers that compute and return
+                fp32, including under autocast. Parameter storage is unchanged. None inherits the saved
+                selection, or selects nothing for a model without one. Pass [] to disable a saved selection.
+                See :meth:`~sentence_transformers.base.model.BaseModel.set_keep_in_fp32_modules`.
         """
+        self.keep_in_fp32_modules = keep_in_fp32_modules
         default_prompts = dict(self._default_prompts)
         if prompts:
             default_prompts.update(prompts)
@@ -312,6 +319,37 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
         self.model_card_data.register_model(self)
 
         self._post_init()
+        self.set_keep_in_fp32_modules([] if self.keep_in_fp32_modules is None else self.keep_in_fp32_modules)
+
+    def set_keep_in_fp32_modules(self, module_names: list[str]) -> None:
+        """Select plain linear layers that compute and return fp32, including under autocast.
+
+        Args:
+            module_names: Exact paths from ``named_modules()``, such as ``"2.linear"`` or
+                ``"0.model.classifier"``. Replaces the previous selection. An empty list disables it.
+
+        The selection is saved in ``config_sentence_transformers.json``. Parameter storage, tied
+        weights, and state-dict keys are unchanged. Weights already rounded during loading or by
+        ``half()`` cannot regain their original precision. Only the torch backend is supported.
+        Configure this before installing custom forwards or offloading hooks on selected layers.
+        """
+        if not isinstance(module_names, (list, tuple)) or any(not isinstance(name, str) for name in module_names):
+            raise ValueError("keep_in_fp32_modules must be a list of module paths.")
+        if module_names and self.backend != "torch":
+            raise ValueError("keep_in_fp32_modules is supported only by the torch backend.")
+        names = list(dict.fromkeys(module_names))
+        selected = {self.get_submodule(name) for name in names}
+        previous = {self.get_submodule(name) for name in self.keep_in_fp32_modules or []}
+        for module in selected | previous:
+            if type(module) not in (nn.Linear, _Float32Linear):
+                raise ValueError("keep_in_fp32_modules supports only plain nn.Linear layers.")
+            if "forward" in module.__dict__ or hasattr(module, "_hf_hook"):
+                raise ValueError("Configure fp32 modules before installing custom forwards or offloading hooks.")
+        for module in previous - selected:
+            module.__class__ = nn.Linear
+        for module in selected:
+            module.__class__ = _Float32Linear
+        self.keep_in_fp32_modules = names
 
     @classmethod
     def _load_with_module_classes(
@@ -792,7 +830,7 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
             self._create_model_card(path, model_name, train_datasets)
 
     def _get_model_config(self) -> dict[str, Any]:
-        return {
+        config = {
             "model_type": self.model_type,
             "__version__": {
                 "sentence_transformers": __version__,
@@ -802,6 +840,9 @@ class BaseModel(nn.Sequential, PeftAdapterMixin, ABC):
             "prompts": self.prompts,
             "default_prompt_name": self.default_prompt_name,
         }
+        if self.keep_in_fp32_modules:
+            config["keep_in_fp32_modules"] = self.keep_in_fp32_modules
+        return config
 
     def save_pretrained(
         self,
@@ -1368,6 +1409,8 @@ This pull request has been automatically generated to add {self.__class__.__name
         current value is ``None`` (i.e. a default placeholder, not yet filled by the user or config).
         Empty string ``""`` is treated as an intentional user-provided value and will not be overwritten.
         """
+        if self.keep_in_fp32_modules is None:
+            self.keep_in_fp32_modules = model_config.get("keep_in_fp32_modules")
         # Only update prompts that aren't already set by the user or defaults
         for prompt_name, prompt_text in model_config.get("prompts", {}).items():
             if prompt_name not in self.prompts or self.prompts[prompt_name] is None:

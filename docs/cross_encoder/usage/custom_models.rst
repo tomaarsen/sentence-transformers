@@ -273,6 +273,50 @@ When building a multimodal :class:`~sentence_transformers.cross_encoder.model.Cr
        },
    )
 
+.. _fp32-modules:
+
+Fp32 Computation for Selected Layers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+CrossEncoder rerankers typically produce a single score per query-document pair. Computing
+this score in reduced precision can round distinct scores to the same value, creating ties.
+Computing the final linear layer in fp32 can reduce these ties while keeping the backbone in bf16.
+
+``keep_in_fp32_modules`` selects plain ``torch.nn.Linear`` layers that compute and return fp32,
+even inside an autocast context. For example:
+
+.. code-block:: python
+
+   from sentence_transformers import CrossEncoder
+
+   model = CrossEncoder(
+       "cross-encoder/ms-marco-MiniLM-L6-v2",
+       device="cuda",
+       model_kwargs={"dtype": "bfloat16"},
+       keep_in_fp32_modules=["0.model.classifier"],
+   )
+
+Paths are exact names from ``model.named_modules()``, without ``.weight`` or ``.bias``. This
+setting is supported by all model types, including SentenceTransformer, SparseEncoder, and MultiVectorEncoder.
+No layers are selected by default. The selection is saved in ``config_sentence_transformers.json``:
+
+.. code-block:: json
+
+   {"keep_in_fp32_modules": ["0.model.classifier"]}
+
+Pass ``keep_in_fp32_modules=[]`` when loading to disable a saved selection, or use
+``model.set_keep_in_fp32_modules([...])`` to replace the selection on an existing model.
+
+This controls computation, including during training. Parameter storage and tied weights are
+unchanged, and later calls to ``half()`` or ``bfloat16()`` still cast stored parameters. fp32
+computation cannot recover weight precision already lost during loading or casting. Selected
+outputs remain fp32, so a following unselected layer must accept that dtype or run under autocast.
+
+Only plain linear layers on the torch backend are supported. Configure the selection before
+installing custom forwards or offloading hooks on those layers. Selecting a plain LM head also
+works, but casting its full weight matrix and producing fp32 vocabulary logits can consume
+substantial temporary memory. Final embedding similarity has no module weights and is unaffected.
+
 Advanced: Custom Modules
 ------------------------
 

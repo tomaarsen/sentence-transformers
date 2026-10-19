@@ -104,6 +104,10 @@ class CrossEncoder(BaseModel, FitMixin):
             when saving the model. If not set, a default model card data object is created. Defaults to None.
         backend (str, optional): The backend to use for inference. Can be ``"torch"`` (default), ``"onnx"``,
             or ``"openvino"``. Defaults to ``"torch"``.
+        keep_in_fp32_modules (list[str], optional): Paths to plain linear layers that compute and return
+            fp32, including under autocast. Parameter storage is unchanged. None inherits the saved
+            selection, or selects nothing for a model without one. Pass [] to disable a saved selection.
+            See :meth:`~sentence_transformers.base.model.BaseModel.set_keep_in_fp32_modules`.
         num_labels (int, optional): Number of labels of the classifier. If 1, the CrossEncoder is a regression
             model that outputs a continuous score. If > 1, it outputs several scores that can be soft-maxed to
             get probability scores for the different classes. Defaults to None.
@@ -163,6 +167,7 @@ class CrossEncoder(BaseModel, FitMixin):
         config_kwargs: dict | None = None,
         model_card_data: CrossEncoderModelCardData | None = None,
         backend: Literal["torch", "onnx", "openvino"] = "torch",
+        keep_in_fp32_modules: list[str] | None = None,
         # CrossEncoder-specific args
         num_labels: int | None = None,
         max_length: int | None = None,
@@ -195,6 +200,7 @@ class CrossEncoder(BaseModel, FitMixin):
             config_kwargs=config_kwargs,
             model_card_data=model_card_data,
             backend=backend,
+            keep_in_fp32_modules=keep_in_fp32_modules,
             prompts=prompts,
             default_prompt_name=default_prompt_name,
         )
