@@ -6,15 +6,10 @@ import pytest
 import torch
 
 from sentence_transformers.base.sampler import GroupByLabelBatchSampler
-from sentence_transformers.util import is_datasets_available
 
-if is_datasets_available():
-    from datasets import Dataset
-else:
-    pytest.skip(
-        reason='Sentence Transformers was not installed with the `["train"]` extra.',
-        allow_module_level=True,
-    )
+pytest.importorskip("datasets", exc_type=ModuleNotFoundError)
+
+from datasets import Dataset
 
 
 @pytest.fixture

@@ -820,10 +820,7 @@ def test_pooling_flattened_live_flash_attention(pooling_mode: str) -> None:
     Loads a real SentenceTransformer with flash_attention_2, runs inference, and compares
     the sentence embeddings against the same model without flash attention.
     """
-    try:
-        import kernels  # noqa: F401
-    except ImportError:
-        pytest.skip("kernels library not available")
+    pytest.importorskip("kernels", reason="kernels library not available", exc_type=ImportError)
 
     sentences = ["This is a test sentence.", "Another one that is a bit longer for variety."]
 
