@@ -19,14 +19,12 @@ from sentence_transformers.base.modules import Dense, Module, Normalize, Router
 from sentence_transformers.base.modules.input_module import InputModule
 from sentence_transformers.sentence_transformer.losses import MultipleNegativesRankingLoss
 from sentence_transformers.sentence_transformer.modules import StaticEmbedding
-from sentence_transformers.util import is_datasets_available
 
 from sentence_transformers.models import Asym  # isort:skip  Softly deprecated import
 
-if is_datasets_available():
-    from datasets import Dataset
-else:
-    pytest.skip("The datasets library is not available.", allow_module_level=True)
+pytest.importorskip("datasets", exc_type=ModuleNotFoundError)
+
+from datasets import Dataset
 
 
 class MockModule(InputModule):

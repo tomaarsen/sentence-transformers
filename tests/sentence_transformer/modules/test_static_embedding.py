@@ -19,12 +19,6 @@ from transformers import __version__ as transformers_version
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.sentence_transformer.modules.static_embedding import StaticEmbedding
 
-try:
-    import model2vec
-except ImportError:
-    model2vec = None
-
-skip_if_no_model2vec = pytest.mark.skipif(model2vec is None, reason="The model2vec library is not installed.")
 skip_if_transformers_5_or_higher = pytest.mark.skipif(
     Version(transformers_version) >= Version("5.0.0rc0"), reason="Transformers version is v5.0.0rc0 or higher."
 )
@@ -64,8 +58,8 @@ def test_save_and_load(tmp_path: Path, static_embedding: StaticEmbedding) -> Non
 
 
 @skip_if_transformers_5_or_higher()  # Model2vec distillation is not yet compatible with transformers v5+
-@skip_if_no_model2vec()
 def test_from_distillation() -> None:
+    pytest.importorskip("model2vec", exc_type=ImportError)
     model = StaticEmbedding.from_distillation("sentence-transformers-testing/stsb-bert-tiny-safetensors", pca_dims=32)
     # The shape has been 29528 for <0.5.0, 29525 for 0.5.0, and 29524 for >=0.6.0, so let's make a safer test
     # that checks the first dimension is close to 29525 and the second dimension is 32.
@@ -108,8 +102,8 @@ def test_from_distillation_passes_device_to_model2vec(
     assert captured == {"model_name": "dummy-teacher", "device": device_kwargs.get("device")}
 
 
-@skip_if_no_model2vec()
 def test_from_model2vec() -> None:
+    pytest.importorskip("model2vec", exc_type=ImportError)
     model = StaticEmbedding.from_model2vec("minishlab/M2V_base_output")
     assert model.embedding.weight.shape == (29528, 256)
 
@@ -155,8 +149,9 @@ def test_load_model2vec_small_weights(tmp_path: Path, embedding_dtype: torch.dty
     torch.testing.assert_close(output, expected, rtol=1e-6, atol=0)
 
 
-@skip_if_no_model2vec()
 def test_from_model2vec_mapping_and_weights(tmp_path: Path) -> None:
+    pytest.importorskip("model2vec", exc_type=ImportError)
+
     import numpy as np
     from model2vec import StaticModel
 

@@ -2195,10 +2195,9 @@ class TestCanFlattenInputs:
 
     def test_false_for_non_torch_backend(self):
         """Flattening requires the torch backend."""
-        try:
-            transformer = Transformer(TINY_BERT, backend="onnx")
-        except (ImportError, Exception):
-            pytest.skip("ONNX backend not available")
+        pytest.importorskip("onnxruntime", exc_type=ImportError)
+        pytest.importorskip("optimum.onnxruntime", exc_type=ImportError)
+        transformer = Transformer(TINY_BERT, backend="onnx")
         assert transformer._can_flatten_inputs() is False
         assert transformer.can_flatten_inputs is False
 
@@ -2218,10 +2217,7 @@ class TestCanFlattenInputs:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     def test_true_with_flash_attention(self):
         """With flash attention and a compatible model, flattening should be enabled."""
-        try:
-            import kernels  # noqa: F401
-        except ImportError:
-            pytest.skip("kernels library not available")
+        pytest.importorskip("kernels", reason="kernels library not available", exc_type=ImportError)
 
         try:
             transformer = Transformer(
