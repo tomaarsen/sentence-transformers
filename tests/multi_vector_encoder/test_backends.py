@@ -11,11 +11,11 @@ import pytest
 
 from tests.utils import is_ci
 
-pytest.importorskip("optimum.intel", exc_type=ImportError)
-pytest.importorskip("optimum.onnxruntime", exc_type=ImportError)
-
-from optimum.intel import OVModelForFeatureExtraction
-from optimum.onnxruntime import ORTModelForFeatureExtraction
+try:
+    from optimum.intel import OVModelForFeatureExtraction
+    from optimum.onnxruntime import ORTModelForFeatureExtraction
+except ImportError:
+    pytest.skip("OpenVINO and ONNX backends are not available", allow_module_level=True)
 
 from sentence_transformers import (
     MultiVectorEncoder,

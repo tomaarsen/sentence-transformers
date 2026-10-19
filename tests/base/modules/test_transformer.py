@@ -2193,13 +2193,15 @@ class TestCanFlattenInputs:
         assert transformer._can_flatten_inputs() is False
         assert transformer.can_flatten_inputs is False
 
-    def test_false_for_non_torch_backend(self):
+    @pytest.mark.parametrize("backend", ["onnx", "openvino"])
+    def test_false_for_non_torch_backend(self, backend):
         """Flattening requires the torch backend."""
-        pytest.importorskip("onnxruntime", exc_type=ImportError)
-        pytest.importorskip("optimum.onnxruntime", exc_type=ImportError)
-        transformer = Transformer(TINY_BERT, backend="onnx")
-        assert transformer._can_flatten_inputs() is False
-        assert transformer.can_flatten_inputs is False
+        transformer = SimpleNamespace(
+            transformer_task="feature-extraction",
+            modality_config={"text": {"method": "forward"}},
+            backend=backend,
+        )
+        assert Transformer._can_flatten_inputs(transformer) is False
 
     def test_false_when_no_flash_attention(self):
         """Without flash attention, flattening should be disabled."""
