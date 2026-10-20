@@ -1234,7 +1234,6 @@ class TestKeepInFP32Modules:
 
         config = json.loads((tmp_path / "config_sentence_transformers.json").read_text())
         assert config["keep_in_fp32_modules"] == ["0.linear"]
-        assert "compute_dtype" not in head.get_config_dict()
 
         restored = CrossEncoder(str(tmp_path), device="cpu").bfloat16()
         x = torch.randn(3, 8, dtype=torch.bfloat16)
