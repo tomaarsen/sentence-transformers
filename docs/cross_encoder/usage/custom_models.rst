@@ -312,6 +312,10 @@ unchanged, and later calls to ``half()`` or ``bfloat16()`` still cast stored par
 computation cannot recover weight precision already lost during loading or casting. Selected
 outputs remain fp32, so a following unselected layer must accept that dtype or run under autocast.
 
+PyTorch's global matmul precision settings still apply. If TF32 or another reduced-precision
+matmul mode is enabled, the internal computation may use lower precision while returning fp32
+tensors. See :func:`torch.set_float32_matmul_precision` for details.
+
 Only plain linear layers on the torch backend are supported. Configure the selection before
 installing custom forwards or offloading hooks on those layers. Selecting a plain LM head also
 works, but casting its full weight matrix and producing fp32 vocabulary logits can consume
