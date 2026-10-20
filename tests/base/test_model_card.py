@@ -134,6 +134,29 @@ class TestSetWidgetExamples:
         all_texts = " ".join([*data.usage_examples, *widget_texts])
         assert not any(f"row{i}" in all_texts for i in (5, 6, 7))
 
+    @pytest.mark.parametrize("empty_column", ["anchor", "positive"])
+    @pytest.mark.parametrize("as_dict", [False, True])
+    def test_widget_examples_skip_empty_texts(self, empty_column, as_dict) -> None:
+        columns = {key: [f"{key} sentence {i}" for i in range(10)] for key in ("anchor", "positive")}
+        columns[empty_column][0] = ""
+        if as_dict:
+            columns = {key: [{key: text} for text in texts] for key, texts in columns.items()}
+        data = _make_model_card_data()
+        with patch(
+            "sentence_transformers.base.model_card.random.sample",
+            side_effect=lambda population, k: list(population)[:k],
+        ):
+            data.set_widget_examples(Dataset.from_dict(columns))
+        assert data.widget
+        assert all(entry["source_sentence"] and all(entry["sentences"]) for entry in data.widget)
+        assert "" not in data.usage_examples
+
+    def test_widget_examples_all_empty(self) -> None:
+        data = _make_model_card_data()
+        data.set_widget_examples(Dataset.from_dict({"text": [""] * 10}))
+        assert data.widget == []
+        assert data.usage_examples is None
+
     def test_generates_examples_for_plain_text_dataset(self) -> None:
         # A plain text dataset (no transform) must still produce widget examples: the skip above is targeted.
         dataset = Dataset.from_dict(

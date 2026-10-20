@@ -573,7 +573,12 @@ class BaseModelCardData(CardData):
 
             lengths = {}
             for idx, sample in enumerate(sampled_rows):
-                lengths[idx] = sum(len(value) for key, value in sample.items() if key != "dataset_name")
+                values = [value for key, value in sample.items() if key != "dataset_name"]
+                if any(value == "" or (isinstance(value, dict) and "" in value.values()) for value in values):
+                    continue
+                lengths[idx] = sum(len(value) for value in values)
+            if not lengths:
+                continue
 
             indices, _ = zip(*sorted(lengths.items(), key=lambda x: x[1]))
             target_indices, backup_indices = indices[:num_samples], list(indices[num_samples:][::-1])
