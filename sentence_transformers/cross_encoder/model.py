@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from tqdm.autonotebook import trange
 from transformers import AutoConfig, PretrainedConfig, PreTrainedModel, is_datasets_available
+from transformers.utils import is_peft_available
 from transformers.utils import logging as transformers_logging
 from typing_extensions import TypeIs, deprecated
 
@@ -218,28 +219,35 @@ class CrossEncoder(BaseModel, FitMixin):
         self.set_keep_in_fp32_modules([] if self.keep_in_fp32_modules is None else self.keep_in_fp32_modules)
 
     def set_keep_in_fp32_modules(self, module_names: list[str]) -> None:
-        """Select plain linear layers that compute and return fp32, including under autocast.
+        """Run selected linear layers in fp32, even when autocast is enabled.
+
+        Selected layers return fp32 outputs during inference and training, while their stored
+        weights retain their dtype. This requires the torch backend.
+
+        The selection is saved with the model and restored when loading.
 
         Args:
-            module_names: Exact paths from ``named_modules()``, such as ``"2.linear"`` or
-                ``"0.model.classifier"``. Replaces the previous selection. An empty list disables it.
-
-        The selection is saved in ``config_sentence_transformers.json``. Parameter storage, tied
-        weights, and state-dict keys are unchanged. Calls to ``half()`` or ``bfloat16()`` still cast
-        stored parameters. Weights already rounded during loading or casting cannot regain their
-        original precision. Only the torch backend is supported, including during training.
-        Selected outputs remain fp32, so a following unselected layer must accept that dtype or
-        run under autocast. Selecting a plain LM head can require some temporary memory
-        for its fp32 weight matrix and vocabulary logits.
-        Configure this before installing custom forwards or offloading hooks on selected layers.
+            module_names: Paths to ``torch.nn.Linear`` layers from ``named_modules()``, such as
+                ``"2.linear"`` or ``"0.model.classifier"``. Replaces the previous selection.
+                Pass an empty list to disable fp32 computation for previously selected layers.
         """
         if not isinstance(module_names, (list, tuple)) or any(not isinstance(name, str) for name in module_names):
             raise ValueError("keep_in_fp32_modules must be a list of module paths.")
         if module_names and self.backend != "torch":
             raise ValueError("keep_in_fp32_modules is supported only by the torch backend.")
+
         names = list(dict.fromkeys(module_names))
         selected = {self.get_submodule(name) for name in names}
         previous = {self.get_submodule(name) for name in self.keep_in_fp32_modules or []}
+        if (selected or previous) and is_peft_available():
+            from peft.utils import ModulesToSaveWrapper
+
+            for modules in (selected, previous):
+                for module in list(modules):
+                    if isinstance(module, ModulesToSaveWrapper):
+                        modules.remove(module)
+                        modules.update([module.original_module, *module.modules_to_save.values()])
+
         for module in selected | previous:
             if type(module) not in (nn.Linear, _Float32Linear):
                 raise ValueError("keep_in_fp32_modules supports only plain nn.Linear layers.")

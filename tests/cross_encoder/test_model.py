@@ -1384,7 +1384,43 @@ class TestKeepInFP32Modules:
         assert type(head) is nn.Linear
         assert model[0](ids).logits.dtype == torch.bfloat16
 
-    def test_cross_encoder_checkpoint(self, tmp_path):
+    def test_peft_modules_to_save_selection(self):
+        pytest.importorskip("peft")
+        from peft.utils import ModulesToSaveWrapper
+
+        head = Dense(8, 1, activation_function=None).bfloat16()
+        model = CrossEncoder(modules=[head], keep_in_fp32_modules=["0.linear"], device="cpu")
+        original = head.linear
+        wrapper = ModulesToSaveWrapper(original, "first")
+        wrapper.update("second")
+        head.linear = wrapper
+        parameters = list(model.parameters())
+        keys = list(model.state_dict())
+        x = torch.randn(3, 8, dtype=torch.bfloat16)
+
+        for selection in ([], ["0.linear"], []):
+            model.set_keep_in_fp32_modules(selection)
+            expected_dtype = torch.float32 if selection else torch.bfloat16
+            assert head.linear is wrapper
+            assert wrapper.original_module is original
+            assert all(before is after for before, after in zip(parameters, model.parameters()))
+            assert list(model.state_dict()) == keys
+
+            with torch.autocast("cpu", dtype=torch.bfloat16):
+                for adapter in ("first", "second"):
+                    wrapper.set_adapter(adapter)
+                    assert head({"sentence_embedding": x})["sentence_embedding"].dtype == expected_dtype
+
+                wrapper.enable_adapters(False)
+                assert head({"sentence_embedding": x})["sentence_embedding"].dtype == expected_dtype
+                wrapper.enable_adapters(True)
+
+    @pytest.mark.parametrize("adapter_order", [None, "before_selection", "after_selection"])
+    def test_cross_encoder_checkpoint(self, tmp_path, adapter_order):
+        if adapter_order:
+            pytest.importorskip("peft")
+            from peft import LoraConfig, TaskType
+
         checkpoint = tmp_path / "checkpoint"
         BertForSequenceClassification(
             BertConfig(vocab_size=4, hidden_size=16, intermediate_size=32, num_hidden_layers=1, num_attention_heads=2)
@@ -1398,10 +1434,19 @@ class TestKeepInFP32Modules:
 
         model = CrossEncoder(
             str(checkpoint),
-            keep_in_fp32_modules=["0.model.classifier"],
+            keep_in_fp32_modules=[] if adapter_order == "before_selection" else ["0.model.classifier"],
             model_kwargs={"dtype": torch.bfloat16},
             device="cpu",
         )
+        if adapter_order:
+            model.add_adapter(
+                LoraConfig(
+                    target_modules=["query", "value"], task_type=TaskType.SEQ_CLS, r=2, modules_to_save=["classifier"]
+                )
+            )
+            if adapter_order == "before_selection":
+                model.set_keep_in_fp32_modules(["0.model.classifier"])
+
         pairs = [("a", "b"), ("b", "a")]
         with torch.autocast("cpu", dtype=torch.bfloat16):
             expected = model.predict(pairs, convert_to_tensor=True)
@@ -1417,4 +1462,9 @@ class TestKeepInFP32Modules:
             torch.testing.assert_close(restored.predict(pairs, convert_to_tensor=True), expected, rtol=0, atol=0)
 
         restored.set_keep_in_fp32_modules([])
-        assert type(restored.model.classifier) is nn.Linear
+        if adapter_order:
+            classifier = restored.model.classifier
+            assert type(classifier.original_module) is nn.Linear
+            assert all(type(module) is nn.Linear for module in classifier.modules_to_save.values())
+        else:
+            assert type(restored.model.classifier) is nn.Linear
