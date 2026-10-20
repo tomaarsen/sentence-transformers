@@ -275,8 +275,8 @@ When building a multimodal :class:`~sentence_transformers.cross_encoder.model.Cr
 
 .. _fp32-modules:
 
-Fp32 Computation for Selected Layers
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FP32 Computation for Selected Layers
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 CrossEncoder rerankers typically produce a single score per query-document pair. Computing
 this score in reduced precision can round distinct scores to the same value, creating ties.
@@ -296,18 +296,15 @@ return fp32 outputs, even when autocast is enabled. For example:
        keep_in_fp32_modules=["0.model.classifier"],
    )
 
-Paths are exact names from ``model.named_modules()``, without ``.weight`` or ``.bias``. This
-setting is supported by all model types, including SentenceTransformer, SparseEncoder, and MultiVectorEncoder.
-The selection is saved in ``config_sentence_transformers.json`` and restored automatically when loading the model.
+Paths are exact names from ``model.named_modules()``, without ``.weight`` or ``.bias``. The
+selection is saved in ``config_sentence_transformers.json`` and automatically restored on load.
+Model authors should save the selection in ``config_sentence_transformers.json`` rather than
+asking users to set it manually when loading. Pass ``keep_in_fp32_modules=[]`` when loading to
+disable a saved selection.
 
-Pass ``keep_in_fp32_modules=[]`` when loading to disable a saved selection, or use
-``model.set_keep_in_fp32_modules([...])`` to replace the selection on an existing model.
-
-This setting applies during both inference and training. The selected layers use fp32 for
-computation while their stored weights keep their existing dtype. For the final classifier
-in the example above, no additional dtype handling is needed. Selecting an LM head also works,
-but casting its full weight matrix and producing fp32 vocabulary logits can consume substantial
-temporary memory.
+This also applies during training. Stored parameters retain their dtype. See
+:meth:`~sentence_transformers.cross_encoder.model.CrossEncoder.set_keep_in_fp32_modules` for
+compatibility details.
 
 Advanced: Custom Modules
 ------------------------

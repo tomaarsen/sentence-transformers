@@ -804,10 +804,13 @@ def test_convert_dense_sentence_transformer_resets_similarity_to_maxsim(tmp_path
     assert model[0].query_expansion is None
 
 
-def test_convert_dense_st_with_dense_head_redirects_to_token_level(tmp_path) -> None:
+@pytest.mark.parametrize("saved_fp32_modules", [None, ["2.linear"]])
+def test_convert_dense_st_with_dense_head_redirects_to_token_level(tmp_path, saved_fp32_modules) -> None:
     """Converting a dense SentenceTransformer WITH a Dense head (LaBSE-shape) redirects the head to
     token level: the conversion drops the Pooling, so sentence-level wiring would KeyError at encode
     time. The learned projection weights are preserved."""
+    import json
+
     from sentence_transformers import SentenceTransformer
     from sentence_transformers.sentence_transformer.modules import Pooling
 
@@ -815,8 +818,14 @@ def test_convert_dense_st_with_dense_head_redirects_to_token_level(tmp_path) -> 
     hidden = transformer.get_embedding_dimension()
     dense = Dense(in_features=hidden, out_features=64, bias=False, activation_function=torch.nn.Identity())
     SentenceTransformer(modules=[transformer, Pooling(hidden, "mean"), dense]).save_pretrained(str(tmp_path))
+    if saved_fp32_modules is not None:
+        config_path = tmp_path / "config_sentence_transformers.json"
+        config = json.loads(config_path.read_text())
+        config["keep_in_fp32_modules"] = saved_fp32_modules
+        config_path.write_text(json.dumps(config))
 
     model = MultiVectorEncoder(str(tmp_path))
+    assert "keep_in_fp32_modules" not in model._get_model_config()
     converted_dense = next(module for module in model if isinstance(module, Dense))
     assert converted_dense.module_input_name == "token_embeddings"
     assert converted_dense.module_output_name == "token_embeddings"

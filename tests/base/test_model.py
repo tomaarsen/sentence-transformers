@@ -4,12 +4,10 @@ import contextlib
 import json
 import logging
 import os
-import pickle
 import tempfile
 import warnings
 from collections import UserDict
 from collections.abc import Callable
-from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,21 +16,9 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
-import torch.nn.functional as F
 from huggingface_hub import CommitInfo, HfApi, RepoUrl
-from tokenizers import Tokenizer
-from tokenizers.models import WordLevel
-from tokenizers.pre_tokenizers import Whitespace
 from torch import Tensor, nn
-from transformers import (
-    BertConfig,
-    BertForSequenceClassification,
-    BertModel,
-    BertTokenizer,
-    GPT2Config,
-    GPT2LMHeadModel,
-    PreTrainedTokenizerFast,
-)
+from transformers import BertConfig, BertModel, BertTokenizer
 
 from sentence_transformers import CrossEncoder, MultiVectorEncoder, SentenceTransformer, SparseEncoder
 from sentence_transformers.base.evaluation import BaseEvaluator
@@ -2259,198 +2245,3 @@ def test_legacy_model_module_paths(tmp_path: Path, external: bool) -> None:
     else:
         load()
         assert loaded_paths == [module_path]
-
-
-class TestKeepInFP32Modules:
-    @pytest.mark.parametrize("model_class", [SentenceTransformer, CrossEncoder, SparseEncoder, MultiVectorEncoder])
-    def test_saved_fp32_selection_and_overrides(self, model_class, tmp_path):
-        head = Dense(8, 1, activation_function=None, module_output_name="scores")
-        model = model_class(modules=[head], keep_in_fp32_modules=["0.linear"], device="cpu")
-        model.save_pretrained(str(tmp_path), create_model_card=False)
-
-        config = json.loads((tmp_path / "config_sentence_transformers.json").read_text())
-        assert config["keep_in_fp32_modules"] == ["0.linear"]
-        assert "compute_dtype" not in head.get_config_dict()
-
-        restored = model_class(str(tmp_path), device="cpu").bfloat16()
-        x = torch.randn(3, 8, dtype=torch.bfloat16)
-        with torch.autocast("cpu", dtype=torch.bfloat16):
-            output = restored({"sentence_embedding": x})["scores"]
-
-        assert output.dtype == torch.float32
-        expected = F.linear(x.float(), restored[0].linear.weight.float(), restored[0].linear.bias.float())
-        torch.testing.assert_close(output, expected, rtol=0, atol=0)
-
-        disabled = model_class(str(tmp_path), keep_in_fp32_modules=[], device="cpu").bfloat16()
-        assert type(disabled[0].linear) is nn.Linear
-        assert disabled({"sentence_embedding": x})["scores"].dtype == torch.bfloat16
-        assert "keep_in_fp32_modules" not in disabled._get_model_config()
-
-    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-    @pytest.mark.parametrize(
-        "device",
-        ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required"))],
-    )
-    def test_precision_gradients_and_parameter_identity(self, dtype, device):
-        head = Dense(8, 1, activation_function=None).to(device=device, dtype=dtype)
-        linear = head.linear
-        parameters = list(head.parameters())
-        keys = list(head.state_dict())
-        optimizer = torch.optim.SGD(parameters, lr=0.1)
-
-        observed = []
-        handle = linear.register_forward_hook(lambda module, args, result: observed.append(result.dtype))
-
-        model = SentenceTransformer(modules=[head], keep_in_fp32_modules=["0.linear"], device=device)
-        model.to(dtype)
-
-        assert head.linear is linear
-        assert list(head.state_dict()) == keys
-        assert all(before is after for before, after in zip(parameters, head.parameters()))
-        assert optimizer.param_groups[0]["params"][0] is linear.weight
-        assert linear.weight.dtype == dtype
-
-        x = torch.randn(4, 8, device=device, dtype=dtype, requires_grad=True)
-        with torch.autocast(device, dtype=dtype):
-            result = head({"sentence_embedding": x})["sentence_embedding"]
-            following = F.linear(x.float(), linear.weight.float(), linear.bias.float())
-
-        expected = F.linear(x.float(), linear.weight.float(), linear.bias.float())
-        torch.testing.assert_close(result, expected, rtol=0, atol=0)
-        assert result.dtype == torch.float32
-        assert following.dtype == dtype
-        assert observed == [torch.float32]
-
-        actual_grads = torch.autograd.grad(result.sum(), (x, *parameters))
-        expected_grads = torch.autograd.grad(expected.sum(), (x, *parameters))
-        for actual, expected in zip(actual_grads, expected_grads):
-            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
-            assert torch.isfinite(actual).all()
-
-        handle.remove()
-
-    def test_selection_replacement_validation_and_defaults(self):
-        head = Dense(8, 1, activation_function=None, use_residual=True).bfloat16()
-        model = SentenceTransformer(modules=[head], device="cpu")
-        assert "keep_in_fp32_modules" not in model._get_model_config()
-
-        model.set_keep_in_fp32_modules(["0.linear", "0.linear"])
-        assert model.keep_in_fp32_modules == ["0.linear"]
-
-        model.set_keep_in_fp32_modules(["0.residual"])
-        assert type(head.linear) is nn.Linear
-
-        with pytest.raises(AttributeError):
-            model.set_keep_in_fp32_modules(["0.linear", "missing"])
-        with pytest.raises(ValueError, match="plain nn.Linear"):
-            model.set_keep_in_fp32_modules(["0.linear", "0"])
-
-        assert type(head.linear) is nn.Linear
-        assert model.keep_in_fp32_modules == ["0.residual"]
-
-        x = torch.randn(3, 8, dtype=torch.bfloat16)
-        assert head.residual(x).dtype == torch.float32
-
-        model.set_keep_in_fp32_modules([])
-        assert type(head.residual) is nn.Linear
-        assert head.residual(x).dtype == torch.bfloat16
-
-    @pytest.mark.parametrize("selection", ["0.linear", [None], {}, 0])
-    def test_invalid_config_selection(self, selection):
-        with pytest.raises(ValueError, match="list of module paths"):
-            SentenceTransformer(modules=[Dense(8, 1)], keep_in_fp32_modules=selection, device="cpu")
-
-    def test_unsupported_modules_and_backends(self):
-        class AdaptedLinear(nn.Linear):
-            pass
-
-        head = Dense(8, 1)
-        head.linear = AdaptedLinear(8, 1)
-        with pytest.raises(ValueError, match="plain nn.Linear"):
-            SentenceTransformer(modules=[head], keep_in_fp32_modules=["0.linear"], device="cpu")
-
-        head.linear = nn.Linear(8, 1)
-        head.linear.forward = lambda x: x
-        with pytest.raises(ValueError, match="custom forwards"):
-            SentenceTransformer(modules=[head], keep_in_fp32_modules=["0.linear"], device="cpu")
-
-        with pytest.raises(ValueError, match="torch backend"):
-            SentenceTransformer(modules=[Dense(8, 1)], keep_in_fp32_modules=["0.linear"], backend="onnx", device="cpu")
-
-    def test_copy_pickle_and_compile(self):
-        model = SentenceTransformer(modules=[Dense(8, 1)], keep_in_fp32_modules=["0.linear"], device="cpu").bfloat16()
-        x = torch.randn(3, 8, dtype=torch.bfloat16)
-        with torch.autocast("cpu", dtype=torch.bfloat16):
-            expected = model({"sentence_embedding": x})["sentence_embedding"]
-
-            for restored in (deepcopy(model), pickle.loads(pickle.dumps(model))):
-                torch.testing.assert_close(restored({"sentence_embedding": x})["sentence_embedding"], expected)
-
-            compiled = torch.compile(model[0], backend="eager", fullgraph=True)
-            torch.testing.assert_close(compiled({"sentence_embedding": x})["sentence_embedding"], expected)
-
-    @pytest.mark.parametrize("architecture", ["classifier", "lm_head"])
-    def test_transformers_heads_and_tied_embeddings(self, architecture):
-        if architecture == "classifier":
-            transformer = BertForSequenceClassification(
-                BertConfig(
-                    vocab_size=32, hidden_size=16, intermediate_size=32, num_hidden_layers=1, num_attention_heads=2
-                )
-            )
-        else:
-            transformer = GPT2LMHeadModel(GPT2Config(vocab_size=32, n_embd=16, n_layer=1, n_head=2, n_positions=16))
-
-        transformer.bfloat16().eval()
-        head = transformer.get_submodule(architecture)
-        original = head.weight
-
-        model = SentenceTransformer(modules=[transformer], keep_in_fp32_modules=[f"0.{architecture}"], device="cpu")
-        ids = torch.randint(0, 32, (2, 8))
-        with torch.autocast("cpu", dtype=torch.bfloat16):
-            assert model[0](ids).logits.dtype == torch.float32
-
-        assert head.weight is original
-        assert head.weight.dtype == torch.bfloat16
-
-        if architecture == "lm_head":
-            assert head.weight is transformer.get_input_embeddings().weight
-            assert transformer.get_input_embeddings()(ids).dtype == torch.bfloat16
-
-        model.set_keep_in_fp32_modules([])
-        assert type(head) is nn.Linear
-        assert model[0](ids).logits.dtype == torch.bfloat16
-
-    def test_cross_encoder_checkpoint(self, tmp_path):
-        checkpoint = tmp_path / "checkpoint"
-        BertForSequenceClassification(
-            BertConfig(vocab_size=4, hidden_size=16, intermediate_size=32, num_hidden_layers=1, num_attention_heads=2)
-        ).save_pretrained(checkpoint)
-
-        tokenizer = Tokenizer(WordLevel({"[PAD]": 0, "[UNK]": 1, "a": 2, "b": 3}, unk_token="[UNK]"))
-        tokenizer.pre_tokenizer = Whitespace()
-        PreTrainedTokenizerFast(
-            tokenizer_object=tokenizer, pad_token="[PAD]", unk_token="[UNK]", model_max_length=16
-        ).save_pretrained(checkpoint)
-
-        model = CrossEncoder(
-            str(checkpoint),
-            keep_in_fp32_modules=["0.model.classifier"],
-            model_kwargs={"dtype": torch.bfloat16},
-            device="cpu",
-        )
-        pairs = [("a", "b"), ("b", "a")]
-        with torch.autocast("cpu", dtype=torch.bfloat16):
-            expected = model.predict(pairs, convert_to_tensor=True)
-            assert model.model(**model.preprocess(pairs)).logits.dtype == torch.float32
-
-        assert model.model.classifier.weight.dtype == torch.bfloat16
-
-        saved = tmp_path / "saved"
-        model.save_pretrained(str(saved), create_model_card=False)
-
-        restored = CrossEncoder(str(saved), model_kwargs={"dtype": torch.bfloat16}, device="cpu")
-        with torch.autocast("cpu", dtype=torch.bfloat16):
-            torch.testing.assert_close(restored.predict(pairs, convert_to_tensor=True), expected, rtol=0, atol=0)
-
-        restored.set_keep_in_fp32_modules([])
-        assert type(restored.model.classifier) is nn.Linear

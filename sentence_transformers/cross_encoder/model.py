@@ -7,7 +7,8 @@ from typing import Any, Literal, overload
 
 import numpy as np
 import torch
-from torch import nn
+import torch.nn.functional as F
+from torch import Tensor, nn
 from tqdm.autonotebook import trange
 from transformers import AutoConfig, PretrainedConfig, PreTrainedModel, is_datasets_available
 from transformers.utils import logging as transformers_logging
@@ -27,6 +28,12 @@ from sentence_transformers.util.decorators import (
 
 # NOTE: transformers wraps the regular logging module for e.g. warning_once
 logger = transformers_logging.get_logger(__name__)
+
+
+class _Float32Linear(nn.Linear):
+    def forward(self, input: Tensor) -> Tensor:
+        with torch.autocast(device_type=input.device.type, enabled=False):
+            return F.linear(input.float(), self.weight.float(), self.bias.float() if self.bias is not None else None)
 
 
 class CrossEncoder(BaseModel, FitMixin):
@@ -107,7 +114,7 @@ class CrossEncoder(BaseModel, FitMixin):
         keep_in_fp32_modules (list[str], optional): Paths to plain linear layers that compute and return
             fp32, including under autocast. Parameter storage is unchanged. None inherits the saved
             selection, or selects nothing for a model without one. Pass [] to disable a saved selection.
-            See :meth:`~sentence_transformers.base.model.BaseModel.set_keep_in_fp32_modules`.
+            See :meth:`~sentence_transformers.cross_encoder.model.CrossEncoder.set_keep_in_fp32_modules`.
         num_labels (int, optional): Number of labels of the classifier. If 1, the CrossEncoder is a regression
             model that outputs a continuous score. If > 1, it outputs several scores that can be soft-maxed to
             get probability scores for the different classes. Defaults to None.
@@ -167,14 +174,15 @@ class CrossEncoder(BaseModel, FitMixin):
         config_kwargs: dict | None = None,
         model_card_data: CrossEncoderModelCardData | None = None,
         backend: Literal["torch", "onnx", "openvino"] = "torch",
-        keep_in_fp32_modules: list[str] | None = None,
         # CrossEncoder-specific args
         num_labels: int | None = None,
         max_length: int | None = None,
         activation_fn: Callable | None = None,
+        keep_in_fp32_modules: list[str] | None = None,
     ) -> None:
         # Preserve an explicit activation before parsing the saved configuration.
         self.activation_fn = activation_fn
+        self.keep_in_fp32_modules = keep_in_fp32_modules
 
         if num_labels is not None:
             if config_kwargs is None:
@@ -200,7 +208,6 @@ class CrossEncoder(BaseModel, FitMixin):
             config_kwargs=config_kwargs,
             model_card_data=model_card_data,
             backend=backend,
-            keep_in_fp32_modules=keep_in_fp32_modules,
             prompts=prompts,
             default_prompt_name=default_prompt_name,
         )
@@ -208,6 +215,41 @@ class CrossEncoder(BaseModel, FitMixin):
 
         if self.activation_fn is None:
             self.activation_fn = self.get_default_activation_fn()
+        self.set_keep_in_fp32_modules([] if self.keep_in_fp32_modules is None else self.keep_in_fp32_modules)
+
+    def set_keep_in_fp32_modules(self, module_names: list[str]) -> None:
+        """Select plain linear layers that compute and return fp32, including under autocast.
+
+        Args:
+            module_names: Exact paths from ``named_modules()``, such as ``"2.linear"`` or
+                ``"0.model.classifier"``. Replaces the previous selection. An empty list disables it.
+
+        The selection is saved in ``config_sentence_transformers.json``. Parameter storage, tied
+        weights, and state-dict keys are unchanged. Calls to ``half()`` or ``bfloat16()`` still cast
+        stored parameters. Weights already rounded during loading or casting cannot regain their
+        original precision. Only the torch backend is supported, including during training.
+        Selected outputs remain fp32, so a following unselected layer must accept that dtype or
+        run under autocast. Selecting a plain LM head can require some temporary memory
+        for its fp32 weight matrix and vocabulary logits.
+        Configure this before installing custom forwards or offloading hooks on selected layers.
+        """
+        if not isinstance(module_names, (list, tuple)) or any(not isinstance(name, str) for name in module_names):
+            raise ValueError("keep_in_fp32_modules must be a list of module paths.")
+        if module_names and self.backend != "torch":
+            raise ValueError("keep_in_fp32_modules is supported only by the torch backend.")
+        names = list(dict.fromkeys(module_names))
+        selected = {self.get_submodule(name) for name in names}
+        previous = {self.get_submodule(name) for name in self.keep_in_fp32_modules or []}
+        for module in selected | previous:
+            if type(module) not in (nn.Linear, _Float32Linear):
+                raise ValueError("keep_in_fp32_modules supports only plain nn.Linear layers.")
+            if "forward" in module.__dict__ or hasattr(module, "_hf_hook"):
+                raise ValueError("Configure fp32 modules before installing custom forwards or offloading hooks.")
+        for module in previous - selected:
+            module.__class__ = nn.Linear
+        for module in selected:
+            module.__class__ = _Float32Linear
+        self.keep_in_fp32_modules = names
 
     def _load_default_modules(
         self,
@@ -788,12 +830,17 @@ class CrossEncoder(BaseModel, FitMixin):
         return True
 
     def _get_model_config(self) -> dict[str, Any]:
-        return super()._get_model_config() | {
+        config = super()._get_model_config() | {
             "activation_fn": fullname(self.activation_fn),
         }
+        if self.keep_in_fp32_modules:
+            config["keep_in_fp32_modules"] = self.keep_in_fp32_modules
+        return config
 
     def _parse_model_config(self, model_config: dict[str, Any]) -> None:
         super()._parse_model_config(model_config)
+        if self.keep_in_fp32_modules is None:
+            self.keep_in_fp32_modules = model_config.get("keep_in_fp32_modules")
         if self.activation_fn is None and "activation_fn" in model_config:
             activation_fn_path = model_config["activation_fn"]
             if activation_fn_path is not None:
