@@ -224,7 +224,8 @@ class CrossEncoder(BaseModel, FitMixin):
         Selected layers return fp32 outputs during inference and training, while their stored
         weights retain their dtype. This requires the torch backend.
 
-        The selection is saved with the model and restored when loading.
+        The selection is saved with the model and restored when loading. Accelerate device
+        placement and offloading hooks are preserved.
 
         Args:
             module_names: Paths to ``torch.nn.Linear`` layers from ``named_modules()``, such as
@@ -248,15 +249,23 @@ class CrossEncoder(BaseModel, FitMixin):
                         modules.remove(module)
                         modules.update([module.original_module, *module.modules_to_save.values()])
 
+        forward_names = {}
         for module in selected | previous:
             if type(module) not in (nn.Linear, _Float32Linear):
                 raise ValueError("keep_in_fp32_modules supports only plain nn.Linear layers.")
-            if "forward" in module.__dict__ or hasattr(module, "_hf_hook"):
-                raise ValueError("Configure fp32 modules before installing custom forwards or offloading hooks.")
-        for module in previous - selected:
-            module.__class__ = nn.Linear
-        for module in selected:
-            module.__class__ = _Float32Linear
+            forward_name = "_old_forward" if hasattr(module, "_hf_hook") else "forward"
+            forward = getattr(module, forward_name, None)
+            if getattr(forward, "__self__", None) is not module or getattr(forward, "__func__", None) not in (
+                nn.Linear.forward,
+                _Float32Linear.forward,
+            ):
+                raise ValueError("keep_in_fp32_modules does not support custom forwards on selected layers.")
+            forward_names[module] = forward_name
+        for module, forward_name in forward_names.items():
+            cls = _Float32Linear if module in selected else nn.Linear
+            module.__class__ = cls
+            if forward_name in module.__dict__:
+                setattr(module, forward_name, cls.forward.__get__(module))
         self.keep_in_fp32_modules = names
 
     def _load_default_modules(

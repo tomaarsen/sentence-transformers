@@ -1352,6 +1352,53 @@ class TestKeepInFP32Modules:
             compiled = torch.compile(model[0], backend="eager", fullgraph=True)
             torch.testing.assert_close(compiled({"sentence_embedding": x})["sentence_embedding"], expected)
 
+    @pytest.mark.parametrize("offload", [False, True])
+    @pytest.mark.parametrize("selected_before_dispatch", [False, True])
+    def test_accelerate_hooks(self, offload, selected_before_dispatch):
+        pytest.importorskip("accelerate")
+        from accelerate.hooks import AlignDevicesHook, add_hook_to_module, remove_hook_from_module
+
+        head = Dense(8, 1, activation_function=None).bfloat16()
+        model = CrossEncoder(
+            modules=[head], keep_in_fp32_modules=["0.linear"] if selected_before_dispatch else [], device="cpu"
+        )
+        x = torch.randn(3, 8, dtype=torch.bfloat16)
+        expected = F.linear(x.float(), head.linear.weight.float(), head.linear.bias.float())
+        hook = AlignDevicesHook(execution_device="cpu", offload=offload)
+        add_hook_to_module(head.linear, hook)
+        wrapped_forward = head.linear.forward
+
+        for selection in (["0.linear"], [], ["0.linear"]):
+            model.set_keep_in_fp32_modules(selection)
+            with torch.autocast("cpu", dtype=torch.bfloat16):
+                output = head.linear(x)
+            dtype = torch.float32 if selection else torch.bfloat16
+            assert output.dtype == dtype
+            torch.testing.assert_close(output, expected.to(dtype))
+            assert head.linear.forward is wrapped_forward
+            assert head.linear._hf_hook is hook
+            assert head.linear.weight.device.type == ("meta" if offload else "cpu")
+
+        remove_hook_from_module(head.linear)
+        for selection in ([], ["0.linear"], []):
+            model.set_keep_in_fp32_modules(selection)
+            assert head.linear(x).dtype == (torch.float32 if selection else torch.bfloat16)
+
+        add_hook_to_module(head.linear, AlignDevicesHook(execution_device="cpu", offload=offload))
+        model.set_keep_in_fp32_modules(["0.linear"])
+        assert head.linear(x).dtype == torch.float32
+        remove_hook_from_module(head.linear)
+
+    def test_accelerate_hook_preserves_custom_forward_rejection(self):
+        pytest.importorskip("accelerate")
+        from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+
+        head = Dense(8, 1)
+        head.linear.forward = lambda x: x
+        add_hook_to_module(head.linear, AlignDevicesHook(execution_device="cpu"))
+        with pytest.raises(ValueError, match="custom forwards"):
+            CrossEncoder(modules=[head], keep_in_fp32_modules=["0.linear"], device="cpu")
+
     @pytest.mark.parametrize("architecture", ["classifier", "lm_head"])
     def test_transformers_heads_and_tied_embeddings(self, architecture):
         if architecture == "classifier":
@@ -1414,8 +1461,13 @@ class TestKeepInFP32Modules:
                 assert head({"sentence_embedding": x})["sentence_embedding"].dtype == expected_dtype
                 wrapper.enable_adapters(True)
 
-    @pytest.mark.parametrize("adapter_order", [None, "before_selection", "after_selection"])
-    def test_cross_encoder_checkpoint(self, tmp_path, adapter_order):
+    @pytest.mark.parametrize(
+        "adapter_order, offload",
+        [(None, False), ("before_selection", False), ("after_selection", False), (None, True)],
+    )
+    def test_cross_encoder_checkpoint(self, tmp_path, adapter_order, offload):
+        if offload:
+            pytest.importorskip("accelerate")
         if adapter_order:
             pytest.importorskip("peft")
             from peft import LoraConfig, TaskType
@@ -1456,7 +1508,12 @@ class TestKeepInFP32Modules:
         saved = tmp_path / "saved"
         model.save_pretrained(str(saved), create_model_card=False)
 
-        restored = CrossEncoder(str(saved), model_kwargs={"dtype": torch.bfloat16}, device="cpu")
+        model_kwargs = {"dtype": torch.bfloat16}
+        if offload:
+            model_kwargs.update(
+                device_map={"bert": "cpu", "classifier": "disk"}, offload_folder=str(tmp_path / "offload")
+            )
+        restored = CrossEncoder(str(saved), model_kwargs=model_kwargs, device="cpu")
         with torch.autocast("cpu", dtype=torch.bfloat16):
             torch.testing.assert_close(restored.predict(pairs, convert_to_tensor=True), expected, rtol=0, atol=0)
 
@@ -1467,3 +1524,6 @@ class TestKeepInFP32Modules:
             assert all(type(module) is nn.Linear for module in classifier.modules_to_save.values())
         else:
             assert type(restored.model.classifier) is nn.Linear
+        if offload:
+            assert restored.model.classifier.weight.device.type == "meta"
+            assert restored.model(**restored.preprocess(pairs)).logits.dtype == torch.bfloat16
