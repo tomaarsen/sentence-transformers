@@ -278,6 +278,10 @@ When building a multimodal :class:`~sentence_transformers.cross_encoder.model.Cr
 FP32 Computation for Selected Layers
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+.. note::
+
+   This feature is experimental. Its API and behavior may change, and it may be removed in a future release.
+
 CrossEncoder rerankers typically produce a single score per query-document pair. Computing
 this score in reduced precision can round distinct scores to the same value, creating ties.
 Computing the final linear layer in fp32 can reduce these ties while keeping the backbone in bf16.
