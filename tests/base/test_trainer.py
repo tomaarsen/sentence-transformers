@@ -392,6 +392,37 @@ def loss_training_model() -> SentenceTransformer:
     return model
 
 
+def test_embedding_distillation_with_tensor_formatted_labels(loss_training_model, tmp_path):
+    model = loss_training_model
+    texts = ["hello", "world", "hello world", "world hello"]
+    labels = torch.ones(len(texts), model.get_embedding_dimension())
+    dataset = Dataset.from_dict({"sentence": texts, "label": labels.tolist()}).with_format(
+        "torch", columns=["label"], output_all_columns=True
+    )
+    trainer = SentenceTransformerTrainer(
+        model=model,
+        train_dataset=dataset,
+        loss=MSELoss(model),
+        args=SentenceTransformerTrainingArguments(
+            output_dir=str(tmp_path),
+            max_steps=1,
+            per_device_train_batch_size=4,
+            learning_rate=0.01,
+            save_strategy="no",
+            report_to=[],
+            use_cpu=True,
+        ),
+    )
+    weights = next(model.parameters())
+    before = weights.detach().clone()
+
+    result = trainer.train()
+
+    assert result.global_step == 1
+    assert not torch.equal(weights, before)
+    assert torch.isfinite(weights).all()
+
+
 @pytest.mark.parametrize("gradient_accumulation_steps", [1, 2])
 @pytest.mark.parametrize("loss_class", [SoftmaxLoss, CosineSimilarityLoss, MSELoss])
 def test_loss_gradients_match_manual_training(
