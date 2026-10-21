@@ -926,8 +926,20 @@ def test_tokenize_deprecation_warning(stsb_bert_tiny_model: SentenceTransformer,
 
 
 def test_gradient_checkpointing_enable(stsb_bert_tiny_model: SentenceTransformer) -> None:
-    """gradient_checkpointing_enable should propagate without error."""
-    stsb_bert_tiny_model.gradient_checkpointing_enable()
+    stsb_bert_tiny_model.gradient_checkpointing_enable({"use_reentrant": False})
+    assert stsb_bert_tiny_model.transformers_model.is_gradient_checkpointing
+
+
+def test_gradient_checkpointing_enable_options() -> None:
+    module = nn.Module()
+    module.gradient_checkpointing_enable = MagicMock()
+    model = SentenceTransformer(modules=[module], device="cpu")
+
+    model.gradient_checkpointing_enable({"use_reentrant": False}, every_n_layers=2, offload=True)
+
+    module.gradient_checkpointing_enable.assert_called_once_with(
+        {"use_reentrant": False}, every_n_layers=2, offload=True
+    )
 
 
 def test_device_property(stsb_bert_tiny_model: SentenceTransformer) -> None:

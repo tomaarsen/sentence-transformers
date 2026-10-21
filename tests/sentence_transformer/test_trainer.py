@@ -45,6 +45,28 @@ if not is_training_available():
     )
 
 
+def test_trainer_gradient_checkpointing(stsb_bert_tiny_model: SentenceTransformer, tmp_path: Path) -> None:
+    dataset = Dataset.from_dict({"anchor": ["a", "b"], "positive": ["c", "d"]})
+    args = SentenceTransformerTrainingArguments(
+        output_dir=str(tmp_path),
+        max_steps=1,
+        per_device_train_batch_size=2,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        report_to="none",
+        save_strategy="no",
+    )
+    trainer = SentenceTransformerTrainer(
+        model=stsb_bert_tiny_model,
+        args=args,
+        train_dataset=dataset,
+        loss=MultipleNegativesRankingLoss(stsb_bert_tiny_model),
+    )
+
+    assert trainer.train().global_step == 1
+    assert stsb_bert_tiny_model.transformers_model.is_gradient_checkpointing
+
+
 def test_trainer_multi_dataset_errors(
     stsb_bert_tiny_model: SentenceTransformer, stsb_dataset_dict: DatasetDict
 ) -> None:
