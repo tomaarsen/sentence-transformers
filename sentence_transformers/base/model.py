@@ -1622,9 +1622,12 @@ This pull request has been automatically generated to add {self.__class__.__name
             os.makedirs(output_path, exist_ok=True)
         return evaluator(self, output_path)
 
-    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs: dict[str, Any] | None = None) -> None:
+    def gradient_checkpointing_enable(
+        self,
+        gradient_checkpointing_kwargs: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> None:
         """Enable gradient checkpointing for the model."""
-        # Propagate the gradient checkpointing to the transformer model
         for module in self.modules():
             if module is not self and hasattr(module, "gradient_checkpointing_enable"):
                 if getattr(module, "supports_gradient_checkpointing", True) is False:
@@ -1634,10 +1637,7 @@ This pull request has been automatically generated to add {self.__class__.__name
                         f"{type(module).__name__} does not support gradient checkpointing, skipping it."
                     )
                     continue
-                try:
-                    module.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
-                except TypeError:
-                    module.gradient_checkpointing_enable()
+                module.gradient_checkpointing_enable(gradient_checkpointing_kwargs, **kwargs)
 
     def _place_modules(self) -> None:
         """Align auxiliary modules without changing backbones or dispatched submodules."""
