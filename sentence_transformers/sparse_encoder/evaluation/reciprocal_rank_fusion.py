@@ -190,8 +190,8 @@ class ReciprocalRankFusionEvaluator(BaseEvaluator):
             dense_ranks = {doc: rank for rank, doc in enumerate(dense_docs, start=1)}
             sparse_ranks = {doc: rank for rank, doc in enumerate(sparse_docs, start=1)}
 
-            # Combine all unique documents
-            all_docs = set(dense_ranks.keys()) | set(sparse_ranks.keys())
+            # Combine all unique documents, dense first, then sparse.
+            all_docs = dict.fromkeys([*dense_ranks, *sparse_ranks])
 
             # Calculate RRF scores
             rrf_scores = {}

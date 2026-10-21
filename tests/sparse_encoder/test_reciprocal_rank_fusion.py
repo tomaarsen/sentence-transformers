@@ -72,3 +72,25 @@ def test_rrf_only_scores_retrievers_that_returned_a_document(tmp_path):
 
     assert prediction["documents"][0] == "shared"
     assert results["mrr@3"] == 1.0
+
+
+def test_rrf_ties_preserve_dense_then_sparse_input_order(tmp_path):
+    dense_docs = [f"d{i}" for i in range(1, 13)]
+    sparse_docs = [f"s{i}" for i in range(1, 13)]
+    dense_samples = [{"query_id": "q1", "query": "query", "positive": ["d1"], "documents": dense_docs}]
+    sparse_samples = [{"query_id": "q1", "query": "query", "positive": ["d1"], "documents": sparse_docs}]
+    evaluator = ReciprocalRankFusionEvaluator(
+        dense_samples=dense_samples,
+        sparse_samples=sparse_samples,
+        at_k=24,
+        write_csv=False,
+        write_predictions=True,
+    )
+
+    results = evaluator(output_path=str(tmp_path))
+
+    with (tmp_path / evaluator.predictions_file).open(encoding="utf-8") as prediction_file:
+        prediction = json.loads(prediction_file.readline())
+
+    assert prediction["documents"] == [doc for pair in zip(dense_docs, sparse_docs) for doc in pair]
+    assert results["mrr@24"] == 1.0
