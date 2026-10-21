@@ -1,7 +1,7 @@
 
 .. tip::
 
-   Sentence Transformers v6.0 recently released, introducing the :class:`~sentence_transformers.multi_vector_encoder.model.MultiVectorEncoder`, a fourth model family for ColBERT-style late-interaction retrieval using token-level (multi-vector) embeddings, covering both text retrieval and ColPali-style visual document retrieval. Existing ColBERT, PyLate, and ColPali models load out of the box, with full training and evaluation support. Read the `Multi-Vector Encoder quickstart <docs/quickstart.html#multi-vector-encoder>`_, the `Multi-Vector (Late Interaction) Embedding Models <https://huggingface.co/blog/multi-vector-encoder>`_ blogpost for inference, the `Training and Finetuning Multi-Vector Embedding Models <https://huggingface.co/blog/train-multi-vector-encoder>`_ blogpost for training, the `v6.0 Release Notes <https://github.com/huggingface/sentence-transformers/releases/tag/v6.0.0>`_, or the `migration guide <docs/migration_guide.html>`_ for more details.
+   Sentence Transformers v6.2 is now out, featuring model merging across all four model types, faster model loading, and automatic distributed evaluation during DDP training. This release also includes lower-memory training losses, multi-vector compression improvements, and fixes throughout training and inference. Read the `v6.2 Release Notes <https://github.com/huggingface/sentence-transformers/releases/tag/v6.2.0>`_ for examples and all changes.
 
 SentenceTransformers Documentation
 ==================================
