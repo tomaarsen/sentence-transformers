@@ -1415,6 +1415,7 @@ class TestKeepInFP32Modules:
         with pytest.raises(ValueError, match="custom forwards"):
             CrossEncoder(modules=[head], keep_in_fp32_modules=["0.linear"], device="cpu")
 
+    @skip_bfloat16_cpu_crash
     @pytest.mark.parametrize("architecture", ["classifier", "lm_head"])
     def test_transformers_heads_and_tied_embeddings(self, architecture):
         if architecture == "classifier":
