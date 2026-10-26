@@ -53,9 +53,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
 
-      - name: Install FFmpeg libraries (needed to build av)
-        run: sudo apt-get update && sudo apt-get install -y libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libavfilter-dev libswscale-dev libswresample-dev
-
       - name: Install with minimum versions
         # Runtime deps at lowest resolution & dev tools at normal resolution
         # av>=12 because av==9.2.0 (from transformers[video]) fails to compile with modern Cython
@@ -63,7 +60,7 @@ jobs:
         # accelerate>=1.13.0 because older accelerate cannot dispatch streaming (IterableDataset) batches
         # with string columns, breaking the streaming trainer tests
         run: |
-          uv pip install '.[train]' 'transformers[vision,audio,video]' 'av>=12.0.0' 'scipy>=1.7.2' 'accelerate>=1.13.0' --resolution lowest-direct --system
+          uv pip install '.[train]' 'transformers[vision,audio,video]' 'av>=12.0.0' 'scipy>=1.7.2' 'accelerate>=1.13.0' --resolution lowest-direct --only-binary av --system
           uv pip install pytest pytest-cov pytest-env pytest-subtests pytest-xdist peft --system
 
       - name: Show installed versions
