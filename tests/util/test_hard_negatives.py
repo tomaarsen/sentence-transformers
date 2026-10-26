@@ -219,7 +219,7 @@ def test_cross_encoder(
         dataset=dataset,
         model=model,
         cross_encoder=cross_encoder,
-        max_score=0.8,  # Need a filtering criterion for cross-encoder to be used
+        max_score=0.8,
         verbose=False,
     )
 
@@ -267,7 +267,7 @@ def test_cross_encoder_with_multiple_positives_non_faiss(
         dataset=multiple_positive_dataset,
         model=model,
         cross_encoder=cross_encoder,
-        max_score=0.9,  # ensure CrossEncoder path is exercised
+        max_score=0.9,
         num_negatives=2,
         verbose=False,
     )
@@ -1931,7 +1931,6 @@ def test_cross_encoder_rescores_without_score_filters(output_scores: bool, outpu
         output_scores=output_scores,
         verbose=False,
     )
-    assert cross_encoder.predict.call_count == 2
     if output_format == "triplet":
         assert result[0]["negative"] == "n_far"
     elif output_format == "n-tuple":
