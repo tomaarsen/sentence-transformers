@@ -78,5 +78,8 @@ jobs:
         run: uv pip install model2vec --system
 
       - name: Run unit tests
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
         run: |
-          python -m pytest --durations 20 -sv tests/
+          python -m pytest -n 4 --durations 20 -v tests/
