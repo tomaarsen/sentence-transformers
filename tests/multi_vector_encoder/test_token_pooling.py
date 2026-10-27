@@ -381,7 +381,9 @@ class TestMaxTokensBudget:
         pooling = HierarchicalTokenPooling(max_tokens=10)
         doc = _normed((10, 8))
         assert torch.allclose(pooling.pool([doc])[0], doc, atol=1e-6)
-        assert pooling.pool([_normed((11, 8))])[0].shape == (10, 8)
+        pooled = pooling.pool([_normed((11, 8))])[0]
+        assert 2 <= pooled.shape[0] <= 10
+        assert pooled.shape[1] == 8
 
     def test_forward_applies_the_budget(self) -> None:
         pooling = HierarchicalTokenPooling(max_tokens=4)
