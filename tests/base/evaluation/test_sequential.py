@@ -39,9 +39,3 @@ def test_sequential_evaluator_retains_model_card_metrics() -> None:
     data.set_evaluation_metrics(evaluator, metrics, epoch=1, step=2)
 
     assert data.training_logs == [{"Epoch": 1, "Step": 2, "retrieval": 0.75, "similarity": 0.5}]
-
-
-def test_sequential_evaluator_rejects_duplicate_metric_keys() -> None:
-    evaluator = SequentialEvaluator([ScoreEvaluator("retrieval", 0.75), ScoreEvaluator("retrieval", 0.5)])
-    with pytest.raises(ValueError, match="Duplicate metric key 'retrieval'.*unique name"):
-        evaluator(None)

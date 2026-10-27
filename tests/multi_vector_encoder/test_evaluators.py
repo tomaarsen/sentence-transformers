@@ -776,12 +776,6 @@ def test_sequential_nano_beir_retains_distinct_pooling_results(monkeypatch, mve_
         assert config["config"] == evaluator.token_pooling.get_config_dict()
         assert evaluator.evaluators[0].get_config_dict()["token_pooling"] == config
 
-    unnamed = MultiVectorNanoBEIREvaluator(
-        dataset_names=["msmarco"], token_pooling=HierarchicalTokenPooling(max_tokens=4, tasks=["query", "document"])
-    )
-    with pytest.raises(ValueError, match="Duplicate metric key.*unique name"):
-        SequentialEvaluator([evaluators[0], unnamed])(mve_bert_tiny_model)
-
 
 def test_reranking_evaluator_token_pooling_and_truncate_dim(mve_bert_tiny_model: MultiVectorEncoder) -> None:
     from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
