@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import runpy
 import tempfile
 from contextlib import nullcontext
 from copy import deepcopy
@@ -65,6 +66,71 @@ def test_trainer_gradient_checkpointing(stsb_bert_tiny_model: SentenceTransforme
 
     assert trainer.train().global_step == 1
     assert stsb_bert_tiny_model.transformers_model.is_gradient_checkpointing
+
+
+def test_mlm_example_trains_with_transformers_v5(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from tokenizers import Tokenizer, models, pre_tokenizers
+    from transformers import BertConfig, BertForMaskedLM, PreTrainedTokenizerFast, TrainingArguments
+
+    vocab = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "hello", "world", "train", "##ing"]
+    backend = Tokenizer(models.WordPiece({token: index for index, token in enumerate(vocab)}, unk_token="[UNK]"))
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    backend.post_processor = TemplateProcessing(single="[CLS] $A [SEP]", special_tokens=[("[CLS]", 2), ("[SEP]", 3)])
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        model_max_length=512,
+        pad_token="[PAD]",
+        unk_token="[UNK]",
+        cls_token="[CLS]",
+        sep_token="[SEP]",
+        mask_token="[MASK]",
+    )
+    initial_model = BertForMaskedLM(
+        BertConfig(
+            vocab_size=len(vocab), hidden_size=16, num_hidden_layers=1, num_attention_heads=2, intermediate_size=32
+        )
+    )
+    dataset = Dataset.from_dict(
+        {
+            "text": [
+                "hello world training " * 20,
+                "hello world",
+                "world hello training " * 20,
+                "training hello world " * 20,
+                "short",
+                "   ",
+            ]
+        }
+    )
+    monkeypatch.setattr("datasets.load_dataset", lambda *args, **kwargs: dataset)
+    monkeypatch.setattr("transformers.AutoTokenizer.from_pretrained", lambda *args, **kwargs: tokenizer)
+    monkeypatch.setattr(
+        "transformers.AutoModelForMaskedLM.from_pretrained", lambda *args, **kwargs: deepcopy(initial_model)
+    )
+    monkeypatch.setattr(
+        "transformers.TrainingArguments", lambda **kwargs: TrainingArguments(**{**kwargs, "max_steps": 3})
+    )
+    script = (
+        Path(__file__).resolve().parents[2] / "examples/sentence_transformer/unsupervised_learning/MLM/train_mlm.py"
+    )
+    monkeypatch.chdir(tmp_path)
+    result = runpy.run_path(str(script), run_name="__main__")
+
+    assert len(result["train_dataset"]) == 3
+    assert len(result["eval_dataset"]) == 1
+    assert result["trainer"].state.global_step == 3
+    assert (Path(result["output_dir"]) / "model.safetensors").exists()
+    weights = result["model"].bert.embeddings.word_embeddings.weight.detach().cpu()
+    assert torch.isfinite(weights).all()
+    assert not torch.equal(weights, initial_model.bert.embeddings.word_embeddings.weight)
+    assert torch.isfinite(torch.tensor(result["trainer"].evaluate()["eval_loss"]))
+    examples = [result["train_dataset"][0], result["train_dataset"][1]]
+    lengths = [len(example["input_ids"]) for example in examples]
+    assert lengths[0] != lengths[1]
+    batch = result["data_collator"](examples)
+    assert batch["input_ids"].shape == (2, max(lengths))
+    assert batch["attention_mask"].shape == batch["input_ids"].shape
+    assert (batch["labels"][batch["attention_mask"] == 0] == -100).all()
 
 
 def test_trainer_multi_dataset_errors(
@@ -1339,6 +1405,17 @@ def test_fit_scheduler_covers_every_objective_step(
     assert len(learning_rates) == 4 * num_objectives
     # The first step sits at the start of the warmup, so only that one may have a zero learning rate
     assert all(learning_rate > 0 for learning_rate in learning_rates[1:])
+
+
+def test_fit_with_uneven_number_of_texts(stsb_bert_tiny_model, tmp_path, monkeypatch) -> None:
+    model = stsb_bert_tiny_model
+    monkeypatch.chdir(tmp_path)
+    examples = [
+        InputExample(texts=["anchor", "positive", "negative"]),
+        InputExample(texts=["anchor", "positive"]),
+    ]
+    with pytest.raises(ValueError, match="training objective 1 must have the same number of texts"):
+        model.fit(train_objectives=[(DataLoader(examples), MultipleNegativesRankingLoss(model))])
 
 
 def test_fit_with_custom_batch_sampler(stsb_bert_tiny_model, tmp_path, monkeypatch, caplog) -> None:

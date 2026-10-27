@@ -25,10 +25,11 @@ class MultiVectorRerankingEvaluator(RerankingEvaluator):
     model rescores them.
 
     See :class:`~sentence_transformers.sentence_transformer.evaluation.RerankingEvaluator` for the full
-    argument list and the ``samples`` format. This subclass differs by resolving the scoring from
-    the model at call time and encoding queries / documents asymmetrically (via ``encode_query`` /
-    ``encode_document``). ``truncate_dim`` truncates every token embedding and L2-normalizes it
-    again before scoring (the
+    argument list and the ``samples`` format. This subclass encodes queries and documents
+    asymmetrically via ``encode_query`` and ``encode_document``, keeping each text's token
+    embeddings as a list of tensors. It passes each query to the model's multi-vector similarity
+    as a one-query batch, so its tokens are scored against every candidate document.
+    ``truncate_dim`` truncates every token embedding and L2-normalizes it again before scoring (the
     :class:`~sentence_transformers.multi_vector_encoder.losses.MultiVectorMatryoshkaLoss` inference
     recipe), and ``token_pooling`` applies a token pooling setup per encode call, exactly like
     ``encode(token_pooling=...)`` (the pooling's ``tasks`` decide which side it compresses).

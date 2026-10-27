@@ -509,6 +509,7 @@ args = SparseEncoderTrainingArguments(
 
 ```{eval-rst}
 You can provide the :class:`~sentence_transformers.sparse_encoder.trainer.SparseEncoderTrainer` with an ``eval_dataset`` to get the evaluation loss during training, but it may be useful to get more concrete metrics during training, too. For this, you can use evaluators to assess the model's performance with useful metrics before, during, or after training. You can use both an ``eval_dataset`` and an evaluator, one or the other, or neither. They evaluate based on the ``eval_strategy`` and ``eval_steps`` `Training Arguments <#training-arguments>`_.
+During `Distributed Data Parallel (DDP) training <../sentence_transformer/training/distributed.html>`_, the trainer automatically distributes evaluator inference across the training processes.
 
 Here are the implemented Evaluators that come with Sentence Transformers for Sparse Encoder models:
 
@@ -623,9 +624,6 @@ Sometimes you don't have the required evaluation data to prepare one of these ev
 
     If you evaluate after training, but before saving the model, your automatically generated model card will still include the test results.
 
-.. warning::
-
-    When using `Distributed Training <../sentence_transformer/training/distributed.html>`_, the evaluator only runs on the first device, unlike the training and evaluation datasets, which are shared across all devices.
 ```
 
 ## Trainer 

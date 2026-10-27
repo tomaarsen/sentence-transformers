@@ -322,3 +322,60 @@ def test_trainer_router_mapping_per_column_rejected(reranker_bert_tiny_model: Cr
             preprocess_fn=reranker_bert_tiny_model.preprocess,
             router_mapping={"stsb-1": {"sentence1": "rerank", "sentence2": "rerank"}},
         )
+
+
+@pytest.mark.parametrize(("num_labels", "labels"), [(1, [1.0, 0.0, 1.0, 0.0]), (3, [2, 0, 1, 2])])
+def test_trainer_tensor_formatted_labels(tmp_path: Path, num_labels: int, labels: list) -> None:
+    """The default losses train on a dataset with tensor labels, e.g. after with_format("torch")."""
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import BertConfig, BertForSequenceClassification, PreTrainedTokenizerFast
+
+    vocab = {"[PAD]": 0, "[UNK]": 1, "hello": 2, "world": 3, "sunny": 4, "today": 5}
+    model_path = tmp_path / "model"
+    BertForSequenceClassification(
+        BertConfig(
+            vocab_size=len(vocab),
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_labels=num_labels,
+        )
+    ).save_pretrained(model_path)
+    tokenizer = Tokenizer(WordLevel(vocab, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer, pad_token="[PAD]", unk_token="[UNK]", model_max_length=16
+    ).save_pretrained(model_path)
+    model = CrossEncoder(str(model_path))
+
+    dataset = Dataset.from_dict(
+        {
+            "query": ["hello", "world", "sunny", "today"],
+            "document": ["hello world", "sunny today", "world", "hello sunny"],
+            "label": labels,
+        }
+    ).with_format("torch", columns=["label"], output_all_columns=True)
+    trainer = CrossEncoderTrainer(
+        model=model,
+        train_dataset=dataset,
+        args=CrossEncoderTrainingArguments(
+            output_dir=str(tmp_path / "output"),
+            max_steps=1,
+            per_device_train_batch_size=4,
+            learning_rate=0.01,
+            save_strategy="no",
+            report_to=[],
+            use_cpu=True,
+        ),
+    )
+    weights = next(model.parameters())
+    before = weights.detach().clone()
+
+    result = trainer.train()
+
+    assert result.global_step == 1
+    assert not torch.equal(weights, before)
+    assert torch.isfinite(weights).all()
