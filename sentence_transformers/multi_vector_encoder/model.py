@@ -105,6 +105,10 @@ class MultiVectorEncoder(BaseModel):
         similarity_fn_name (str or SimilarityFunction, optional): The name of the similarity function, either
             ``"maxsim"`` or ``"meanmaxsim"`` (MaxSim divided by the query's token count). Defaults to
             ``"maxsim"``.
+        token_pooling (BaseTokenPooling, optional): Default pooling for the encode methods, applied
+            after the forward pipeline and before truncation. A per-call pooler overrides this
+            default. If a call passes None, this default is used. This runtime default is not
+            saved with the model. Defaults to None.
         truncate_dim (int, optional): Default token embedding dimension for the encode methods. Truncated
             vectors are L2-normalized, and a per-call value overrides this default. If None, uses the
             saved setting or the model's full embedding dimension.
@@ -176,11 +180,14 @@ class MultiVectorEncoder(BaseModel):
         config_kwargs: dict[str, Any] | None = None,
         model_card_data: MultiVectorEncoderModelCardData | None = None,
         backend: Literal["torch", "onnx", "openvino"] = "torch",
+        # MultiVectorEncoder-specific args
         similarity_fn_name: str | SimilarityFunction | None = None,
+        token_pooling: BaseTokenPooling | None = None,
         truncate_dim: int | None = None,
     ) -> None:
         # Stash before super().__init__ so _parse_model_config only falls back to saved config when unset.
         self.similarity_fn_name = similarity_fn_name
+        self.token_pooling = token_pooling
         self.truncate_dim = truncate_dim
         # Legacy-checkpoint state populated by ``_parse_model_config`` (PyLate v3) and
         # ``_maybe_load_stanford_metadata`` (Stanford-NLP). Empty for native MVE saves.
@@ -218,6 +225,13 @@ class MultiVectorEncoder(BaseModel):
                     "mask, so without one they will not be scored. Add a MultiVectorMask module after "
                     "the Transformer."
                 )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "token_pooling":
+            if value is not None and not isinstance(value, BaseTokenPooling):
+                raise ValueError("token_pooling must be a BaseTokenPooling module or None.")
+            return super(nn.Module, self).__setattr__(name, value)
+        return super().__setattr__(name, value)
 
     def is_singular_input(self, inputs: Any) -> TypeIs[SingleInput]:
         """Check if the input is a single example rather than a batch. Redeclared with
@@ -784,7 +798,7 @@ class MultiVectorEncoder(BaseModel):
                 output dicts instead: every feature key (``token_embeddings``, ``attention_mask``,
                 and any extra keys custom modules wrote), unsliced and padded to each batch's
                 longest input. With ``None``, normalization and the ``convert_to_*`` options do not
-                apply. Per-call ``token_pooling`` does apply: it
+                apply. The default or per-call ``token_pooling`` does apply: it
                 rewrites ``token_embeddings`` and ``attention_mask`` in the dicts.
             convert_to_numpy (bool, optional): If True, returns a list of :class:`numpy.ndarray` and moves
                 each batch to the CPU as it is encoded. Defaults to False, so embeddings stay on
@@ -805,7 +819,8 @@ class MultiVectorEncoder(BaseModel):
                 documents). If the model already bakes a pooling into its pipeline, this
                 compounds on top of it (pooling further). A one-time note is logged so the case is
                 discoverable. With ``output_value=None``, applied to the raw dicts
-                (``token_embeddings`` and ``attention_mask`` are rewritten). Defaults to None.
+                (``token_embeddings`` and ``attention_mask`` are rewritten). If None, uses the
+                model's default pooler.
             task (str, optional): One of ``"query"``, ``"document"``. Sets the prefix / length /
                 masking strategy.
             truncate_dim (int, optional): Truncate and L2-normalize token embeddings after per-call
@@ -826,6 +841,8 @@ class MultiVectorEncoder(BaseModel):
             raise ValueError(f"batch_size must be a positive integer, got {batch_size}.")
 
         truncate_dim = truncate_dim if truncate_dim is not None else self.truncate_dim
+        if token_pooling is None:
+            token_pooling = self.token_pooling
 
         if output_value not in ("token_embeddings", None):
             raise ValueError(
@@ -932,9 +949,8 @@ class MultiVectorEncoder(BaseModel):
                             isinstance(module, BaseTokenPooling) for module in self
                         ):
                             logger.warning_once(
-                                "This model already includes a token pooling in its pipeline: the per-call "
-                                "`token_pooling=` pools further on top of it (compounding). Omit it if you only "
-                                "want the model's built-in pooling."
+                                "This model already includes token pooling in its pipeline. The additional "
+                                "`token_pooling` pools further on top of it (compounding)."
                             )
                         features = token_pooling(features, task=task)
                     if truncate_dim is not None:
@@ -960,15 +976,14 @@ class MultiVectorEncoder(BaseModel):
                 if normalize_embeddings:
                     batch_embeddings = [nn.functional.normalize(emb, p=2, dim=-1) for emb in batch_embeddings]
 
-            # Per-call pooling. The pooling's own ``tasks`` gate decides whether this task is
+            # The pooling's own ``tasks`` gate decides whether this task is
             # pooled. Compounds on top of any pooling baked into the pipeline (supported, but
             # noted once in case it's unexpected).
             if token_pooling is not None:
                 if token_pooling.applies_to(task) and any(isinstance(module, BaseTokenPooling) for module in self):
                     logger.warning_once(
-                        "This model already includes a token pooling in its pipeline: the per-call "
-                        "`token_pooling=` pools further on top of it (compounding). Omit it if you only "
-                        "want the model's built-in pooling."
+                        "This model already includes token pooling in its pipeline. The additional "
+                        "`token_pooling` pools further on top of it (compounding)."
                     )
                 batch_embeddings = token_pooling.pool(batch_embeddings, task=task)
 

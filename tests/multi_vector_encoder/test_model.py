@@ -1593,6 +1593,76 @@ def test_init_truncate_dim_save_load(mve_bert_tiny_model: MultiVectorEncoder, tm
     assert "truncate_dim" not in loaded._get_model_config()
 
 
+@pytest.mark.parametrize("method", ["encode", "encode_query", "encode_document"])
+@pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
+def test_init_token_pooling_defaults_and_overrides(mve_bert_tiny_model, method: str, output: str) -> None:
+    original = mve_bert_tiny_model
+    default = HierarchicalTokenPooling(max_tokens=4, tasks=["query", "document"])
+    override = HierarchicalTokenPooling(max_tokens=8, tasks=["query", "document"])
+    dim = original.get_embedding_dimension() // 2
+    model = MultiVectorEncoder(
+        modules=list(original), prompts=original.prompts, device="cpu", token_pooling=default, truncate_dim=dim
+    )
+    texts = ["short text", "a longer document with several distinct tokens to pool together"]
+    kwargs = {"output_value": None} if output == "raw" else {"convert_to_numpy": output == "numpy"}
+    for options, pooling in [
+        ({}, default),
+        ({"token_pooling": None}, default),
+        ({"token_pooling": override}, override),
+    ]:
+        actual = getattr(model, method)(texts, **kwargs, **options)
+        expected = getattr(original, method)(texts, truncate_dim=dim, token_pooling=pooling, **kwargs)
+        for value, reference in zip(actual, expected):
+            if output == "raw":
+                torch.testing.assert_close(value["attention_mask"], reference["attention_mask"])
+                torch.testing.assert_close(value["token_embeddings"], reference["token_embeddings"])
+            elif output == "numpy":
+                np.testing.assert_allclose(value, reference, atol=1e-6)
+            else:
+                torch.testing.assert_close(value, reference)
+    assert model.token_pooling is default
+    assert len(model) == len(original)
+
+
+def test_init_token_pooling_does_not_change_forward(mve_bert_tiny_model) -> None:
+    model = MultiVectorEncoder(
+        modules=list(mve_bert_tiny_model), token_pooling=HierarchicalTokenPooling(max_tokens=4), device="cpu"
+    ).eval()
+    text = "a longer document with several distinct tokens to pool together"
+    with torch.no_grad():
+        output = model(model.preprocess([text], task="document"), task="document")
+    full_count = int(output["attention_mask"].sum())
+    assert full_count > 8
+    assert len(model.encode_document(text)) <= 4
+    assert len(model.encode_query(text)) == len(model.encode_query(text, token_pooling=None))
+    assert "token_pooling" not in dict(model.named_children())
+    model.token_pooling = HierarchicalTokenPooling(max_tokens=8)
+    assert "token_pooling" not in dict(model.named_children())
+    assert len(model.encode_document(text)) <= 8
+    model.token_pooling = None
+    assert len(model.encode_document(text)) == full_count
+
+
+@pytest.mark.parametrize("pooler", ["hierarchical", "lambda"])
+def test_init_token_pooling_is_not_saved(mve_bert_tiny_model, tmp_path, pooler: str) -> None:
+    from sentence_transformers.multi_vector_encoder.modules import LambdaTokenPooling
+
+    pooling = (
+        HierarchicalTokenPooling(max_tokens=4)
+        if pooler == "hierarchical"
+        else LambdaTokenPooling(pool_fn=lambda emb: emb[::2])
+    )
+    model = MultiVectorEncoder(modules=list(mve_bert_tiny_model), token_pooling=pooling, device="cpu")
+    model.save_pretrained(str(tmp_path), create_model_card=False)
+    assert "token_pooling" not in model._get_model_config()
+    assert not (tmp_path / "token_pooling").exists()
+    loaded = MultiVectorEncoder(str(tmp_path), device="cpu", local_files_only=True)
+    assert loaded.token_pooling is None
+    text = "a longer document with several distinct tokens to pool together"
+    torch.testing.assert_close(loaded.encode_document(text), mve_bert_tiny_model.encode_document(text))
+    assert model.token_pooling is pooling
+
+
 def test_encode_empty_list(mve_bert_tiny_model: MultiVectorEncoder) -> None:
     model = mve_bert_tiny_model
     assert model.encode([]) == []

@@ -67,6 +67,14 @@ print(scores)
 
 The loss teaches the encoder to work with pooled embeddings, while `token_pooling` selects the compression applied at inference. Saving the encoder does not automatically enable the poolers used in its training loss. Apply the same pooling configuration when building the document index that you evaluated for deployment.
 
+To use a pooler by default, pass it when initializing the encoder:
+
+```python
+model = MultiVectorEncoder("tomaarsen/mve-ModernBERT-base-token-pooling", token_pooling=pooling)
+```
+
+Calls to `encode`, `encode_query`, and `encode_document` then use this default, with the pooler's `tasks` still deciding which inputs are pooled. Pass another pooler to override it for a call, or set `model.token_pooling = None` to clear the default. To save pooling as part of the model, add the pooler to its module pipeline instead.
+
 With `HierarchicalTokenPooling`, choose one of the three pooling controls according to the constraint you want to express:
 
 | Control | Effect | When to use it |
