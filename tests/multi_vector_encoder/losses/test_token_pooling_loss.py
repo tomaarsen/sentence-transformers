@@ -23,6 +23,7 @@ from sentence_transformers.multi_vector_encoder.modules import (
     HierarchicalTokenPooling,
     LambdaTokenPooling,
 )
+from tests.utils import skip_fp16_cpu_layer_norm
 
 DIM = 8
 
@@ -334,6 +335,7 @@ def test_stacked_modifiers_cached_matches_non_cached() -> None:
 
 
 @pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
+@skip_fp16_cpu_layer_norm
 def test_stacked_modifiers_fp16_padding_has_finite_gradients(mve_bert_tiny_model, build_inner) -> None:
     from sentence_transformers.util import batch_to_device
 

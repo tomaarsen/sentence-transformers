@@ -19,7 +19,7 @@ from sentence_transformers.multi_vector_encoder.scoring import XTRScores, colber
 from sentence_transformers.sentence_transformer.modules import WordEmbeddings
 from sentence_transformers.sentence_transformer.modules.tokenizer import WhitespaceTokenizer
 from sentence_transformers.util import SimilarityFunction, maxsim, maxsim_pairwise
-from tests.utils import skip_bfloat16_cpu_crash
+from tests.utils import skip_bfloat16_cpu_crash, skip_fp16_cpu_layer_norm
 
 
 def test_loads_with_default_modules() -> None:
@@ -1505,7 +1505,13 @@ def test_truncate_dim_slicing(mve_bert_tiny_model: MultiVectorEncoder, truncate_
     torch.testing.assert_close(actual, expected)
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, pytest.param(torch.bfloat16, marks=skip_bfloat16_cpu_crash)])
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pytest.param(torch.float16, marks=skip_fp16_cpu_layer_norm),
+        pytest.param(torch.bfloat16, marks=skip_bfloat16_cpu_crash),
+    ],
+)
 @pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
 def test_encode_truncation_with_low_precision_padding(mve_bert_tiny_model, dtype: torch.dtype, output: str) -> None:
     model = mve_bert_tiny_model.to(device="cpu", dtype=dtype).eval()
