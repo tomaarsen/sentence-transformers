@@ -22,6 +22,7 @@ from sentence_transformers.base.modules import Normalize, Transformer
 from sentence_transformers.base.modules.dense import Dense
 from sentence_transformers.multi_vector_encoder.model_card import MultiVectorEncoderModelCardData
 from sentence_transformers.multi_vector_encoder.modules import BaseTokenPooling, MultiVectorMask
+from sentence_transformers.multi_vector_encoder.modules.token_pooling import _normalize_token_embeddings
 from sentence_transformers.util import batch_to_device, load_file_path
 from sentence_transformers.util.misc import import_from_string
 from sentence_transformers.util.similarity import SimilarityFunction
@@ -937,8 +938,8 @@ class MultiVectorEncoder(BaseModel):
                             )
                         features = token_pooling(features, task=task)
                     if truncate_dim is not None:
-                        features["token_embeddings"] = nn.functional.normalize(
-                            features["token_embeddings"][..., :truncate_dim], p=2, dim=-1
+                        features["token_embeddings"] = _normalize_token_embeddings(
+                            features["token_embeddings"][..., :truncate_dim]
                         )
                     # Raw per-input module outputs, unsliced. Batch-first tensors are split per
                     # input, other values (ints, strings, flattened tensors) are carried as-is.
@@ -972,9 +973,7 @@ class MultiVectorEncoder(BaseModel):
                 batch_embeddings = token_pooling.pool(batch_embeddings, task=task)
 
             if truncate_dim is not None:
-                batch_embeddings = [
-                    nn.functional.normalize(emb[..., :truncate_dim], p=2, dim=-1) for emb in batch_embeddings
-                ]
+                batch_embeddings = [_normalize_token_embeddings(emb[..., :truncate_dim]) for emb in batch_embeddings]
 
             if save_to_cpu:
                 batch_embeddings = [emb.cpu() for emb in batch_embeddings]

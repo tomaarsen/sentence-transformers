@@ -22,8 +22,10 @@ def shrink(tensor: Tensor, dim: int) -> Tensor:
             f"Dimension {dim} in matryoshka_dims cannot be greater than the model's embedding dimension: {tensor_dim}"
         )
     tensor = tensor[..., :dim]
-    tensor = F.normalize(tensor, p=2, dim=-1)
-    return tensor
+    dtype = tensor.dtype
+    if dtype in (torch.float16, torch.bfloat16):
+        tensor = tensor.float()
+    return F.normalize(tensor, p=2, dim=-1).to(dtype)
 
 
 class ForwardDecorator:

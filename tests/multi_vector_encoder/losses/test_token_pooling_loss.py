@@ -334,6 +334,40 @@ def test_stacked_modifiers_cached_matches_non_cached() -> None:
 
 
 @pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
+def test_stacked_modifiers_fp16_padding_has_finite_gradients(mve_bert_tiny_model, build_inner) -> None:
+    from sentence_transformers.util import batch_to_device
+
+    model = mve_bert_tiny_model.to(device="cpu", dtype=torch.float16).eval()
+    dim = model.get_embedding_dimension()
+    pooling = HierarchicalTokenPooling(pool_factor=2)
+    truncated = mve_losses.MultiVectorMatryoshkaLoss(model, build_inner(model), matryoshka_dims=[dim, dim // 2])
+    loss = mve_losses.MultiVectorTokenPoolingLoss(model, truncated, token_poolings=[None, pooling], weights=[0.5, 0.5])
+    features = [
+        batch_to_device(model.preprocess(texts, task=task), model.device)
+        for texts, task in [
+            (["what is retrieval", "how does pooling work"], "query"),
+            (
+                [
+                    "short text",
+                    "this longer document includes many distinct words to produce a different pooled token count",
+                ],
+                "document",
+            ),
+        ]
+    ]
+    with torch.no_grad():
+        pooled = pooling(model(dict(features[1]), task="document"), task="document")
+        assert (~pooled["attention_mask"]).any()
+    value = loss(features, None)
+    assert torch.isfinite(value)
+    value.backward()
+    gradients = [parameter.grad for parameter in model.parameters() if parameter.grad is not None]
+    assert gradients
+    assert all(torch.isfinite(gradient).all() for gradient in gradients)
+    assert any(gradient.abs().sum() > 0 for gradient in gradients)
+
+
+@pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
 def test_matryoshka_outside_token_pooling_raises(build_inner) -> None:
     model = _PassthroughModel()
     pooled = mve_losses.MultiVectorTokenPoolingLoss(

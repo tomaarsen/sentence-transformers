@@ -1505,6 +1505,42 @@ def test_truncate_dim_slicing(mve_bert_tiny_model: MultiVectorEncoder, truncate_
     torch.testing.assert_close(actual, expected)
 
 
+@pytest.mark.parametrize("dtype", [torch.float16, pytest.param(torch.bfloat16, marks=skip_bfloat16_cpu_crash)])
+@pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
+def test_encode_truncation_with_low_precision_padding(mve_bert_tiny_model, dtype: torch.dtype, output: str) -> None:
+    model = mve_bert_tiny_model.to(device="cpu", dtype=dtype).eval()
+    kwargs = {"output_value": None} if output == "raw" else {"convert_to_numpy": output == "numpy"}
+    dim = model.get_embedding_dimension() // 2
+    embeddings = model.encode_document(
+        [
+            "short text",
+            "a much longer document with many distinct words that create different numbers of pooled vectors",
+        ],
+        batch_size=2,
+        token_pooling=HierarchicalTokenPooling(pool_factor=2),
+        truncate_dim=dim,
+        **kwargs,
+    )
+    if output == "raw":
+        assert any((~item["attention_mask"].bool()).any() for item in embeddings)
+    for embedding in embeddings:
+        if output == "raw":
+            values = embedding["token_embeddings"]
+            assert torch.isfinite(values).all()
+            padding = ~embedding["attention_mask"].bool()
+            assert values[padding].count_nonzero() == 0
+            values = values[~padding]
+        elif output == "numpy":
+            values = torch.from_numpy(embedding)
+        else:
+            values = embedding
+        assert values.shape[-1] == dim
+        if output != "numpy":
+            assert values.dtype == dtype
+        assert torch.isfinite(values).all()
+        torch.testing.assert_close(values.float().norm(dim=-1), torch.ones(len(values)), atol=0.005, rtol=0.005)
+
+
 @pytest.mark.parametrize("method", ["encode", "encode_query", "encode_document"])
 @pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
 def test_init_truncate_dim(mve_bert_tiny_model: MultiVectorEncoder, method: str, output: str) -> None:

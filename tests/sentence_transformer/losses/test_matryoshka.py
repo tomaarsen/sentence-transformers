@@ -29,6 +29,25 @@ def mock_loss():
     return _FakeLoss()
 
 
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32, torch.float64])
+def test_shrink_zero_padding_has_finite_values_and_gradients(dtype: torch.dtype) -> None:
+    from sentence_transformers.sentence_transformer.losses.matryoshka import shrink
+
+    valid = torch.tensor([[True, False, False], [True, True, True]])
+    embeddings = torch.randn(2, 3, 8, generator=torch.Generator().manual_seed(42), dtype=dtype)
+    embeddings[~valid] = 0
+    embeddings.requires_grad_()
+
+    truncated = shrink(embeddings, 4)
+    assert truncated.dtype == dtype
+    assert torch.isfinite(truncated).all()
+    assert truncated[~valid].count_nonzero() == 0
+    torch.testing.assert_close(truncated[valid].float().norm(dim=-1), torch.ones(valid.sum()), atol=0.005, rtol=0.005)
+    truncated[valid].float().sum().backward()
+    assert torch.isfinite(embeddings.grad).all()
+    assert embeddings.grad[~valid].count_nonzero() == 0
+
+
 def test_empty_matryoshka_dims_raises_error(static_retrieval_mrl_en_v1_model, mock_loss):
     """Test that empty matryoshka_dims raises ValueError."""
     with pytest.raises(ValueError, match="You must provide at least one dimension in matryoshka_dims."):
