@@ -104,6 +104,9 @@ class MultiVectorEncoder(BaseModel):
         similarity_fn_name (str or SimilarityFunction, optional): The name of the similarity function, either
             ``"maxsim"`` or ``"meanmaxsim"`` (MaxSim divided by the query's token count). Defaults to
             ``"maxsim"``.
+        truncate_dim (int, optional): Default token embedding dimension for the encode methods. Truncated
+            vectors are L2-normalized, and a per-call value overrides this default. If None, uses the
+            saved setting or the model's full embedding dimension.
 
     Note:
         Length / expansion / masking knobs (``query_length``, ``document_length``, ``query_expansion``,
@@ -173,9 +176,11 @@ class MultiVectorEncoder(BaseModel):
         model_card_data: MultiVectorEncoderModelCardData | None = None,
         backend: Literal["torch", "onnx", "openvino"] = "torch",
         similarity_fn_name: str | SimilarityFunction | None = None,
+        truncate_dim: int | None = None,
     ) -> None:
         # Stash before super().__init__ so _parse_model_config only falls back to saved config when unset.
         self.similarity_fn_name = similarity_fn_name
+        self.truncate_dim = truncate_dim
         # Legacy-checkpoint state populated by ``_parse_model_config`` (PyLate v3) and
         # ``_maybe_load_stanford_metadata`` (Stanford-NLP). Empty for native MVE saves.
         self._legacy = _LegacyStash()
@@ -236,6 +241,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> Tensor: ...
 
@@ -255,6 +261,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> np.ndarray: ...
 
@@ -274,6 +281,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> dict[str, Tensor]: ...
 
@@ -292,6 +300,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor]: ...
 
@@ -311,6 +320,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[np.ndarray]: ...
 
@@ -330,6 +340,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[dict[str, Tensor]]: ...
 
@@ -349,6 +360,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]: ...
 
@@ -366,6 +378,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = None,
         chunk_size: int | None = None,
         token_pooling: BaseTokenPooling | None = None,
+        truncate_dim: int | None = None,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]:
         """Compute query embeddings. Uses the "query" prompt and routes through the query side.
@@ -393,6 +406,7 @@ class MultiVectorEncoder(BaseModel):
             pool=pool,
             chunk_size=chunk_size,
             token_pooling=token_pooling,
+            truncate_dim=truncate_dim,
             task="query",
             **kwargs,
         )
@@ -412,6 +426,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> Tensor: ...
 
@@ -431,6 +446,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> np.ndarray: ...
 
@@ -450,6 +466,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> dict[str, Tensor]: ...
 
@@ -468,6 +485,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor]: ...
 
@@ -487,6 +505,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[np.ndarray]: ...
 
@@ -506,6 +525,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[dict[str, Tensor]]: ...
 
@@ -525,6 +545,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]: ...
 
@@ -542,6 +563,7 @@ class MultiVectorEncoder(BaseModel):
         pool: dict[Literal["input", "output", "processes"], Any] | None = None,
         chunk_size: int | None = None,
         token_pooling: BaseTokenPooling | None = None,
+        truncate_dim: int | None = None,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]:
         """Compute document embeddings. Uses the first available of ``"document"`` / ``"passage"`` / ``"corpus"``
@@ -573,6 +595,7 @@ class MultiVectorEncoder(BaseModel):
             pool=pool,
             chunk_size=chunk_size,
             token_pooling=token_pooling,
+            truncate_dim=truncate_dim,
             task="document",
             **kwargs,
         )
@@ -593,6 +616,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> Tensor: ...
 
@@ -613,6 +637,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> np.ndarray: ...
 
@@ -633,6 +658,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> dict[str, Tensor]: ...
 
@@ -652,6 +678,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor]: ...
 
@@ -672,6 +699,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[np.ndarray]: ...
 
@@ -692,6 +720,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[dict[str, Tensor]]: ...
 
@@ -712,6 +741,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
+        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]: ...
 
@@ -730,6 +760,7 @@ class MultiVectorEncoder(BaseModel):
         chunk_size: int | None = None,
         token_pooling: BaseTokenPooling | None = None,
         task: str | None = None,
+        truncate_dim: int | None = None,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]:
         """Compute multi-vector token-level embeddings.
@@ -776,6 +807,9 @@ class MultiVectorEncoder(BaseModel):
                 (``token_embeddings`` and ``attention_mask`` are rewritten). Defaults to None.
             task (str, optional): One of ``"query"``, ``"document"``. Sets the prefix / length /
                 masking strategy.
+            truncate_dim (int, optional): Truncate and L2-normalize token embeddings after per-call
+                pooling, including with ``output_value=None``. If None, uses the model's default
+                ``truncate_dim``.
 
         Returns:
             list[Tensor] | list[ndarray] | Tensor | ndarray: By default, a list of per-input 2D tensors of
@@ -789,6 +823,8 @@ class MultiVectorEncoder(BaseModel):
 
         if batch_size <= 0:
             raise ValueError(f"batch_size must be a positive integer, got {batch_size}.")
+
+        truncate_dim = truncate_dim if truncate_dim is not None else self.truncate_dim
 
         if output_value not in ("token_embeddings", None):
             raise ValueError(
@@ -832,6 +868,7 @@ class MultiVectorEncoder(BaseModel):
             save_to_cpu=convert_to_numpy,
             normalize_embeddings=normalize_embeddings,
             token_pooling=token_pooling,
+            truncate_dim=truncate_dim,
             task=task,
             **kwargs,
         )
@@ -862,6 +899,7 @@ class MultiVectorEncoder(BaseModel):
         save_to_cpu: bool,
         normalize_embeddings: bool,
         token_pooling: BaseTokenPooling | None,
+        truncate_dim: int | None,
         task: str | None,
         device: str | torch.device | None = None,
         **kwargs,
@@ -898,6 +936,10 @@ class MultiVectorEncoder(BaseModel):
                                 "want the model's built-in pooling."
                             )
                         features = token_pooling(features, task=task)
+                    if truncate_dim is not None:
+                        features["token_embeddings"] = nn.functional.normalize(
+                            features["token_embeddings"][..., :truncate_dim], p=2, dim=-1
+                        )
                     # Raw per-input module outputs, unsliced. Batch-first tensors are split per
                     # input, other values (ints, strings, flattened tensors) are carried as-is.
                     for idx in range(len(inputs_batch)):
@@ -928,6 +970,11 @@ class MultiVectorEncoder(BaseModel):
                         "want the model's built-in pooling."
                     )
                 batch_embeddings = token_pooling.pool(batch_embeddings, task=task)
+
+            if truncate_dim is not None:
+                batch_embeddings = [
+                    nn.functional.normalize(emb[..., :truncate_dim], p=2, dim=-1) for emb in batch_embeddings
+                ]
 
             if save_to_cpu:
                 batch_embeddings = [emb.cpu() for emb in batch_embeddings]
@@ -1051,6 +1098,8 @@ class MultiVectorEncoder(BaseModel):
     def _get_model_config(self) -> dict[str, Any]:
         config = super()._get_model_config()
         config["similarity_fn_name"] = self._similarity_fn_name
+        if self.truncate_dim is not None:
+            config["truncate_dim"] = self.truncate_dim
         return config
 
     def _post_init(self) -> None:
@@ -1131,6 +1180,8 @@ class MultiVectorEncoder(BaseModel):
                 self._legacy.prefixes[prompt_key] = prefix
                 saved_prompts[prompt_key] = prefix + (saved_prompts.get(prompt_key) or "").removeprefix(prefix)
         super()._parse_model_config({**model_config, "prompts": saved_prompts})
+        if self.truncate_dim is None:
+            self.truncate_dim = model_config.get("truncate_dim")
         # Inherit a supported saved similarity_fn_name unless the user overrode it (legacy cosine/dot fall through).
         saved_similarity = model_config.get("similarity_fn_name")
         if self._similarity_fn_name is None and saved_similarity in self.SUPPORTED_SIMILARITY_FN_NAMES:
@@ -1580,11 +1631,15 @@ class MultiVectorEncoder(BaseModel):
 
     def get_embedding_dimension(self) -> int | None:
         """The dimensionality of each token vector returned by :meth:`encode`."""
+        embedding_dim = None
         for module in reversed(self._modules.values()):
             method = getattr(module, "get_embedding_dimension", None)
             if callable(method):
-                return method()
-        return None
+                embedding_dim = method()
+                break
+        if self.truncate_dim is not None:
+            return self.truncate_dim if embedding_dim is None else min(embedding_dim, self.truncate_dim)
+        return embedding_dim
 
     def _push_to_hub_usage_tip(self, repo_id: str) -> str:
         class_name = self.__class__.__name__

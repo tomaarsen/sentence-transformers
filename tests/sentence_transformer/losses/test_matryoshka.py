@@ -7,7 +7,12 @@ import torch
 
 from sentence_transformers import SentenceTransformer
 from sentence_transformers.base.modules import Dense
-from sentence_transformers.sentence_transformer.losses import MatryoshkaLoss, MSELoss, MultipleNegativesRankingLoss
+from sentence_transformers.sentence_transformer.losses import (
+    CachedMultipleNegativesRankingLoss,
+    MatryoshkaLoss,
+    MSELoss,
+    MultipleNegativesRankingLoss,
+)
 from sentence_transformers.sentence_transformer.modules import Pooling, WordEmbeddings
 from sentence_transformers.sentence_transformer.modules.tokenizer import WhitespaceTokenizer
 from sentence_transformers.util import cos_sim
@@ -223,3 +228,36 @@ def test_matryoshka_dims_can_exceed_token_embedding_dimension(architecture: str)
     expected.backward()
     for grad, param in zip(grads, model.parameters()):
         torch.testing.assert_close(grad, param.grad)
+
+
+def test_cached_loss_behind_wrappers_matches_non_cached(stsb_bert_tiny_model: SentenceTransformer) -> None:
+    from tests.sentence_transformer.losses.utils import assert_trained, disable_dropout, gradients
+
+    class ScaledLoss(torch.nn.Module):
+        def __init__(self, loss):
+            super().__init__()
+            self.loss = loss
+            self.uses_gradient_cache = getattr(loss, "uses_gradient_cache", False)
+
+        def forward(self, features, labels):
+            return 0.7 * self.loss(features, labels)
+
+    model = stsb_bert_tiny_model.cpu()
+    disable_dropout(model)
+    model.train()
+
+    def loss_and_grads(inner):
+        model.zero_grad()
+        features = [
+            model.preprocess(texts) for texts in (["anchor a", "anchor b", "anchor c"], ["doc a", "doc b", "doc c"])
+        ]
+        loss = MatryoshkaLoss(model, ScaledLoss(ScaledLoss(inner)), matryoshka_dims=[128, 64, 32])
+        value = loss(features, None)
+        value.backward()
+        return value.detach(), gradients(model)
+
+    cached_value, cached_grads = loss_and_grads(CachedMultipleNegativesRankingLoss(model, mini_batch_size=2))
+    plain_value, plain_grads = loss_and_grads(MultipleNegativesRankingLoss(model))
+    assert_trained(cached_grads)
+    torch.testing.assert_close(cached_value, plain_value, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(cached_grads, plain_grads, rtol=1e-4, atol=1e-4)

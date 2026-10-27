@@ -563,15 +563,284 @@ def test_distillation_evaluator_rejects_mismatched_nested_shapes() -> None:
         )
 
 
-def test_evaluators_reject_truncate_dim() -> None:
-    """MultiVectorEncoder has no Matryoshka-style truncation: passing truncate_dim must fail loud
-    instead of logging a truncation and computing full-dimension metrics."""
-    queries = {"q0": "What is the capital of France?"}
-    corpus = {"d0": "Paris is the capital of France."}
-    qrels = {"q0": {"d0"}}
-    with pytest.raises(ValueError, match="truncate_dim"):
-        MultiVectorInformationRetrievalEvaluator(queries=queries, corpus=corpus, relevant_docs=qrels, truncate_dim=64)
-    with pytest.raises(ValueError, match="truncate_dim"):
-        MultiVectorNanoBEIREvaluator(dataset_names=["msmarco"], truncate_dim=64)
-    with pytest.raises(ValueError, match="truncate_dim"):
-        MultiVectorTripletEvaluator(anchors=["a"], positives=["p"], negatives=["n"], truncate_dim=64)
+def _ir_eval_data() -> tuple[dict[str, str], dict[str, str], dict[str, set[str]]]:
+    queries = {"q0": "What is the capital of France?", "q1": "Who painted the Mona Lisa?"}
+    corpus = {
+        "d0": "Paris is the capital of France and its largest city by a wide margin.",
+        "d1": "Berlin is the capital of Germany and hosts the federal government there.",
+        "d2": "The Mona Lisa was painted by the Italian master Leonardo da Vinci.",
+        "d3": "Van Gogh painted The Starry Night during his stay in the asylum.",
+    }
+    qrels = {"q0": {"d0"}, "q1": {"d2"}}
+    return queries, corpus, qrels
+
+
+def test_pooling_name_suffix() -> None:
+    """Short pooling names distinguish pooled evaluations in metric keys and model cards."""
+    from sentence_transformers.multi_vector_encoder.evaluation.utils import pooling_name_suffix
+    from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling, LambdaTokenPooling
+
+    assert pooling_name_suffix(HierarchicalTokenPooling(pool_factor=2)) == "pool_factor_2"
+    assert pooling_name_suffix(HierarchicalTokenPooling(pool_factor=1.5)) == "pool_factor_1.5"
+    assert pooling_name_suffix(HierarchicalTokenPooling(max_tokens=64)) == "max_tokens_64"
+    assert pooling_name_suffix(HierarchicalTokenPooling(distance_threshold=0.25)) == "distance_threshold_0.25"
+    assert pooling_name_suffix(LambdaTokenPooling(pool_fn=lambda e: e)) == "lambda_token_pooling"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"tasks": ["query", "document"]},
+        {"tasks": []},
+        {"num_protected_tokens": 0},
+        {"normalize_embeddings": False},
+    ],
+)
+def test_pooling_names_stay_short_with_non_default_settings(kwargs) -> None:
+    from sentence_transformers.multi_vector_encoder.evaluation.utils import pooling_name_suffix
+    from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
+
+    pooling = HierarchicalTokenPooling(max_tokens=16, **kwargs)
+    assert pooling_name_suffix(pooling) == "max_tokens_16"
+
+
+def test_custom_pooling_configuration() -> None:
+    import json
+
+    from sentence_transformers.multi_vector_encoder.evaluation.utils import pooling_config, pooling_name_suffix
+    from sentence_transformers.multi_vector_encoder.modules import BaseTokenPooling
+
+    class StridePooling(BaseTokenPooling):
+        config_keys = ["tasks", "stride"]
+
+        def __init__(self, stride: int) -> None:
+            super().__init__()
+            self.stride = stride
+
+        def pool_one(self, embedding):
+            return embedding[:: self.stride]
+
+    first, second = StridePooling(2), StridePooling(3)
+    assert pooling_name_suffix(first) == pooling_name_suffix(second) == "stride_pooling"
+    config = pooling_config(first)
+    assert config["type"].endswith(".StridePooling")
+    assert config["config"] == {"tasks": ["document"], "stride": 2}
+    assert json.loads(json.dumps(config)) == config
+
+
+def test_ir_evaluator_token_pooling_matches_pipeline_pooling(mve_bert_tiny_model: MultiVectorEncoder) -> None:
+    """``token_pooling=`` must reach every document encode (documents only, per the default task
+    gate) and score exactly like the same pooling baked into the pipeline."""
+    from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling, LambdaTokenPooling
+
+    model = mve_bert_tiny_model
+    queries, corpus, qrels = _ir_eval_data()
+
+    def build(**kwargs) -> MultiVectorInformationRetrievalEvaluator:
+        return MultiVectorInformationRetrievalEvaluator(
+            queries=queries, corpus=corpus, relevant_docs=qrels, name="pooling_smoke", write_csv=False, **kwargs
+        )
+
+    # A recording passthrough pins that the parameter reaches encode, once per document.
+    pooled_inputs: list[int] = []
+
+    def record(emb):
+        pooled_inputs.append(emb.shape[0])
+        return emb
+
+    build(token_pooling=LambdaTokenPooling(pool_fn=record))(model)
+    assert len(pooled_inputs) == len(corpus), "token_pooling did not reach every document encode"
+
+    pooled = build(token_pooling=HierarchicalTokenPooling(pool_factor=2))(model)
+    model.append(HierarchicalTokenPooling(pool_factor=2))
+    try:
+        pipeline_pooled = build()(model)
+    finally:
+        model.pop(-1)
+
+    map_key = "pooling_smoke_maxsim_map@100"
+    assert pooled[map_key] == pytest.approx(pipeline_pooled[map_key], abs=1e-6)
+
+
+def test_ir_evaluator_truncate_dim_matches_manual_truncation(mve_bert_tiny_model: MultiVectorEncoder) -> None:
+    """``truncate_dim`` truncates and re-normalizes every token embedding. A LambdaTokenPooling
+    applying the same recipe to both tasks must produce identical metrics."""
+    import torch.nn.functional as F
+
+    from sentence_transformers.multi_vector_encoder.modules import LambdaTokenPooling
+
+    model = mve_bert_tiny_model
+    queries, corpus, qrels = _ir_eval_data()
+    dim = model.get_embedding_dimension() // 2
+
+    def build(**kwargs) -> MultiVectorInformationRetrievalEvaluator:
+        return MultiVectorInformationRetrievalEvaluator(
+            queries=queries, corpus=corpus, relevant_docs=qrels, name="truncate_smoke", write_csv=False, **kwargs
+        )
+
+    truncated = build(truncate_dim=dim)(model)
+    manual = build(
+        token_pooling=LambdaTokenPooling(
+            pool_fn=lambda emb: F.normalize(emb[..., :dim], p=2, dim=-1), tasks=["query", "document"]
+        )
+    )(model)
+    map_key = "truncate_smoke_maxsim_map@100"
+    assert truncated[map_key] == pytest.approx(manual[map_key], abs=1e-6)
+
+    overlarge = build(truncate_dim=model.get_embedding_dimension() + 1)
+    assert overlarge(model) == pytest.approx(build()(model))
+
+
+def test_nano_beir_evaluator_token_pooling_and_truncate_dim_naming(monkeypatch) -> None:
+    """Pooled and truncated NanoBEIR evaluations get distinct names on the aggregate and every
+    subset, preserving the metric-key parsing invariant (aggregate has exactly one underscore-
+    separated segment more than each subset name)."""
+    from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
+
+    subsets = {
+        "queries": [{"_id": "q", "text": "query"}],
+        "corpus": [{"_id": "d", "text": "document"}],
+        "qrels": [{"query-id": "q", "corpus-id": "d"}],
+    }
+    monkeypatch.setattr(
+        MultiVectorNanoBEIREvaluator, "_load_dataset_subset_split", lambda self, subset, **kwargs: subsets[subset]
+    )
+
+    pooled = MultiVectorNanoBEIREvaluator(
+        dataset_names=["msmarco"], token_pooling=HierarchicalTokenPooling(pool_factor=2)
+    )
+    assert pooled.name == "NanoBEIR_mean_pool_factor_2"
+    assert pooled.evaluators[0].name == "NanoMSMARCO_pool_factor_2"
+    assert pooled.name.count("_") == pooled.evaluators[0].name.count("_") + 1
+    config = pooled.get_config_dict()["token_pooling"]
+    assert config["type"].endswith(".HierarchicalTokenPooling")
+    assert config["config"] == pooled.token_pooling.get_config_dict()
+
+    truncated = MultiVectorNanoBEIREvaluator(dataset_names=["msmarco"], truncate_dim=64)
+    assert truncated.name == "NanoBEIR_mean_64"
+    assert truncated.evaluators[0].name == "NanoMSMARCO_64"
+
+    both = MultiVectorNanoBEIREvaluator(
+        dataset_names=["msmarco"], truncate_dim=64, token_pooling=HierarchicalTokenPooling(max_tokens=32)
+    )
+    assert both.name == "NanoBEIR_mean_64_max_tokens_32"
+    assert both.evaluators[0].name == "NanoMSMARCO_64_max_tokens_32"
+    assert both.name.count("_") == both.evaluators[0].name.count("_") + 1
+
+    named = MultiVectorNanoBEIREvaluator(
+        dataset_names=["msmarco"],
+        truncate_dim=64,
+        token_pooling=HierarchicalTokenPooling(max_tokens=32),
+        name="queries_and_documents",
+    )
+    assert named.name == "queries_and_documents_NanoBEIR_mean_64_max_tokens_32"
+    assert named.evaluators[0].name == "queries_and_documents_NanoMSMARCO_64_max_tokens_32"
+    assert named.name.count("_") == named.evaluators[0].name.count("_") + 1
+    assert named.get_config_dict()["name"] == "queries_and_documents"
+
+
+def test_sequential_nano_beir_retains_distinct_pooling_results(monkeypatch, mve_bert_tiny_model, tmp_path) -> None:
+    from sentence_transformers.base.evaluation import SequentialEvaluator
+    from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
+
+    queries, corpus, qrels = _ir_eval_data()
+    subsets = {
+        "queries": [{"_id": key, "text": text} for key, text in queries.items()],
+        "corpus": [{"_id": key, "text": text} for key, text in corpus.items()],
+        "qrels": [{"query-id": query, "corpus-id": doc} for query, docs in qrels.items() for doc in docs],
+    }
+    monkeypatch.setattr(
+        MultiVectorNanoBEIREvaluator, "_load_dataset_subset_split", lambda self, subset, **kwargs: subsets[subset]
+    )
+    evaluators = [
+        MultiVectorNanoBEIREvaluator(
+            dataset_names=["msmarco"], token_pooling=HierarchicalTokenPooling(max_tokens=4, **kwargs), name=name
+        )
+        for name, kwargs in [
+            ("", {}),
+            ("queries_and_documents", {"tasks": ["query", "document"]}),
+            ("no_protected_tokens", {"num_protected_tokens": 0}),
+            ("unnormalized", {"normalize_embeddings": False}),
+        ]
+    ]
+    individual = [evaluator(mve_bert_tiny_model) for evaluator in evaluators]
+    combined = SequentialEvaluator(evaluators)(mve_bert_tiny_model, output_path=str(tmp_path))
+    assert len(combined) == sum(map(len, individual)) + 1
+    assert len({evaluator.csv_file for evaluator in evaluators}) == len(evaluators)
+    for evaluator, result in zip(evaluators, individual):
+        assert (tmp_path / evaluator.csv_file).exists()
+        assert (tmp_path / evaluator.evaluators[0].csv_file).exists()
+        assert evaluator.primary_metric in combined
+        assert all(combined[key] == value for key, value in result.items())
+        config = evaluator.get_config_dict()["token_pooling"]
+        assert config["config"] == evaluator.token_pooling.get_config_dict()
+        assert evaluator.evaluators[0].get_config_dict()["token_pooling"] == config
+
+    unnamed = MultiVectorNanoBEIREvaluator(
+        dataset_names=["msmarco"], token_pooling=HierarchicalTokenPooling(max_tokens=4, tasks=["query", "document"])
+    )
+    with pytest.raises(ValueError, match="Duplicate metric key.*unique name"):
+        SequentialEvaluator([evaluators[0], unnamed])(mve_bert_tiny_model)
+
+
+def test_reranking_evaluator_token_pooling_and_truncate_dim(mve_bert_tiny_model: MultiVectorEncoder) -> None:
+    from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
+
+    model = mve_bert_tiny_model
+    samples = [
+        {
+            "query": "What is the capital of France?",
+            "positive": ["Paris is the capital of France and its largest city by a wide margin."],
+            "negative": ["Van Gogh painted The Starry Night during his stay in the asylum."],
+        }
+    ]
+    evaluator = MultiVectorRerankingEvaluator(
+        samples=samples,
+        name="rerank_pooling",
+        write_csv=False,
+        token_pooling=HierarchicalTokenPooling(pool_factor=2),
+        truncate_dim=64,
+    )
+    results = evaluator(model)
+    assert 0.0 <= results[evaluator.primary_metric] <= 1.0
+    assert evaluator.get_config_dict()["token_pooling"]["config"] == evaluator.token_pooling.get_config_dict()
+
+
+def test_triplet_and_distillation_evaluators_token_pooling_and_truncate_dim(
+    mve_bert_tiny_model: MultiVectorEncoder,
+) -> None:
+    from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
+
+    model = mve_bert_tiny_model
+    triplet = MultiVectorTripletEvaluator(
+        anchors=["What is the capital of France?"],
+        positives=["Paris is the capital of France and its largest city by a wide margin."],
+        negatives=["Van Gogh painted The Starry Night during his stay in the asylum."],
+        name="triplet_pooling",
+        write_csv=False,
+        token_pooling=HierarchicalTokenPooling(pool_factor=2),
+        truncate_dim=64,
+    )
+    results = triplet(model)
+    assert 0.0 <= results[triplet.primary_metric] <= 1.0
+    assert triplet.get_config_dict()["token_pooling"]["config"] == triplet.token_pooling.get_config_dict()
+
+    distillation = MultiVectorDistillationEvaluator(
+        queries=["What is the capital of France?"],
+        documents=[
+            [
+                "Paris is the capital of France and its largest city by a wide margin.",
+                "Van Gogh painted The Starry Night during his stay in the asylum.",
+            ]
+        ],
+        scores=[[9.0, 1.0]],
+        name="distill_pooling",
+        write_csv=False,
+        token_pooling=HierarchicalTokenPooling(pool_factor=2),
+        truncate_dim=64,
+    )
+    results = distillation(model)
+    assert "distill_pooling_spearman" in results
+    config = distillation.get_config_dict()
+    assert config["token_pooling"]["config"] == distillation.token_pooling.get_config_dict()
+    assert config["truncate_dim"] == 64

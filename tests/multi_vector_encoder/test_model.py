@@ -1466,6 +1466,97 @@ def test_encode_pooling_skips_queries_on_raw_output(mve_bert_tiny_model: MultiVe
     assert opted_in["token_embeddings"].shape[0] < unpooled.shape[0]
 
 
+@pytest.mark.parametrize("method", ["encode", "encode_query", "encode_document"])
+@pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
+def test_encode_truncate_dim(mve_bert_tiny_model: MultiVectorEncoder, method: str, output: str) -> None:
+    model = mve_bert_tiny_model
+    encode = getattr(model, method)
+    texts = ["short text", "a longer document with several distinct tokens to pool together"]
+    dim = model.get_embedding_dimension() // 2
+    pooling = HierarchicalTokenPooling(pool_factor=2)
+    full = encode(texts, token_pooling=pooling)
+    kwargs = {"output_value": None} if output == "raw" else {"convert_to_numpy": output == "numpy"}
+    truncated = encode(texts, truncate_dim=dim, token_pooling=pooling, **kwargs)
+    for expected, actual in zip(full, truncated):
+        expected = torch.nn.functional.normalize(expected[..., :dim], p=2, dim=-1)
+        if output == "raw":
+            actual = actual["token_embeddings"][actual["attention_mask"].bool()]
+        elif output == "numpy":
+            assert isinstance(actual, np.ndarray)
+            actual = torch.from_numpy(actual).to(expected.device)
+        assert actual.shape == expected.shape
+        torch.testing.assert_close(actual, expected)
+    single = encode(texts[0], truncate_dim=dim, token_pooling=pooling, **kwargs)
+    assert isinstance(single, dict if output == "raw" else np.ndarray if output == "numpy" else torch.Tensor)
+    assert (single["token_embeddings"] if output == "raw" else single).shape[-1] == dim
+
+
+@pytest.mark.parametrize("truncate_dim", [0, -1, 10_000])
+@pytest.mark.parametrize("use_default", [False, True])
+def test_truncate_dim_slicing(mve_bert_tiny_model: MultiVectorEncoder, truncate_dim: int, use_default: bool) -> None:
+    model = mve_bert_tiny_model
+    full = model.encode("text")
+    if use_default:
+        model = MultiVectorEncoder(modules=list(model), truncate_dim=truncate_dim, device=str(model.device))
+        actual = model.encode("text")
+    else:
+        actual = model.encode("text", truncate_dim=truncate_dim)
+    expected = torch.nn.functional.normalize(full[..., :truncate_dim], p=2, dim=-1)
+    torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize("method", ["encode", "encode_query", "encode_document"])
+@pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
+def test_init_truncate_dim(mve_bert_tiny_model: MultiVectorEncoder, method: str, output: str) -> None:
+    original = mve_bert_tiny_model
+    full_dim = original.get_embedding_dimension()
+    dim = full_dim // 2
+    texts = ["short text", "a longer document with several distinct tokens to pool together"]
+    pooling = HierarchicalTokenPooling(pool_factor=2)
+    full = getattr(original, method)(texts, token_pooling=pooling)
+    model = MultiVectorEncoder(
+        modules=list(original), prompts=original.prompts, truncate_dim=dim, device=str(original.device)
+    )
+    kwargs = {"output_value": None} if output == "raw" else {"convert_to_numpy": output == "numpy"}
+    encode = getattr(model, method)
+    for requested_dim in [None, dim // 2, full_dim]:
+        actual_embeddings = encode(texts, truncate_dim=requested_dim, token_pooling=pooling, **kwargs)
+        expected_dim = dim if requested_dim is None else requested_dim
+        for expected, actual in zip(full, actual_embeddings):
+            expected = torch.nn.functional.normalize(expected[..., :expected_dim], p=2, dim=-1)
+            if output == "raw":
+                actual = actual["token_embeddings"][actual["attention_mask"].bool()]
+            elif output == "numpy":
+                actual = torch.from_numpy(actual).to(expected.device)
+            torch.testing.assert_close(actual, expected)
+        assert model.get_embedding_dimension() == dim
+        assert model.truncate_dim == dim
+
+
+def test_init_truncate_dim_save_load(mve_bert_tiny_model: MultiVectorEncoder, tmp_path) -> None:
+    original = mve_bert_tiny_model
+    full_dim = original.get_embedding_dimension()
+    model = MultiVectorEncoder(modules=list(original), truncate_dim=full_dim // 4, device="cpu")
+    model.save_pretrained(str(tmp_path), create_model_card=False)
+
+    loaded = MultiVectorEncoder(str(tmp_path), device="cpu", local_files_only=True)
+    assert loaded.truncate_dim == full_dim // 4
+    assert loaded.get_embedding_dimension() == full_dim // 4
+    assert loaded.encode_document("a document").shape[-1] == full_dim // 4
+    torch.testing.assert_close(
+        loaded.encode_document("a document", truncate_dim=full_dim), original.encode_document("a document").cpu()
+    )
+
+    overridden = MultiVectorEncoder(str(tmp_path), device="cpu", truncate_dim=full_dim // 2, local_files_only=True)
+    assert overridden.truncate_dim == full_dim // 2
+    assert overridden.encode_query("a query").shape[-1] == full_dim // 2
+
+    loaded.truncate_dim = None
+    assert loaded.get_embedding_dimension() == full_dim
+    assert loaded.encode("text").shape[-1] == full_dim
+    assert "truncate_dim" not in loaded._get_model_config()
+
+
 def test_encode_empty_list(mve_bert_tiny_model: MultiVectorEncoder) -> None:
     model = mve_bert_tiny_model
     assert model.encode([]) == []

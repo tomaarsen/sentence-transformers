@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from sentence_transformers.base.losses.gradcache import uses_gradient_cache
+from sentence_transformers.base.losses.gradcache import resolve_gradient_cache_loss, uses_gradient_cache
 from sentence_transformers.sentence_transformer.model import SentenceTransformer
 
 logger = logging.getLogger(__name__)
@@ -217,8 +217,9 @@ class MatryoshkaLoss(nn.Module):
         # is removed, so decorate their `calculate_loss` to shrink the cached embeddings instead.
         self.uses_gradient_cache = uses_gradient_cache(loss)
         if self.uses_gradient_cache:
-            loss.calculate_loss = CachedLossDecorator(
-                loss.calculate_loss, self.matryoshka_dims, self.matryoshka_weights, self.n_dims_per_step
+            gradient_cache_loss = resolve_gradient_cache_loss(loss)
+            gradient_cache_loss.calculate_loss = CachedLossDecorator(
+                gradient_cache_loss.calculate_loss, self.matryoshka_dims, self.matryoshka_weights, self.n_dims_per_step
             )
 
     def forward(self, sentence_features: Iterable[dict[str, Tensor]], labels: Tensor) -> Tensor:

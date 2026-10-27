@@ -24,3 +24,13 @@ pick for which dataset format.
 ```{eval-rst}
 .. autoclass:: sentence_transformers.multi_vector_encoder.losses.MultiVectorMarginMSELoss
 ```
+
+## MultiVectorMatryoshkaLoss
+```{eval-rst}
+.. autoclass:: sentence_transformers.multi_vector_encoder.losses.MultiVectorMatryoshkaLoss
+```
+
+## MultiVectorTokenPoolingLoss
+```{eval-rst}
+.. autoclass:: sentence_transformers.multi_vector_encoder.losses.MultiVectorTokenPoolingLoss
+```

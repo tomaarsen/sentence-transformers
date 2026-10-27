@@ -60,6 +60,16 @@ For the n-way KD format with externally-stored query / document texts (e.g.
 document datasets on the fly.
 ```
 
+## Loss modifiers
+
+Loss modifiers wrap another loss to train for index compression. `MultiVectorMatryoshkaLoss` trains for fewer embedding dimensions, and `MultiVectorTokenPoolingLoss` trains for fewer document tokens. The two can be stacked.
+
+| Inputs | Labels | Appropriate Loss Functions                                                                                                                                                                                                                                                                                 |
+|--------|--------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `any`  | `any`  | <a href="../package_reference/multi_vector_encoder/losses.html#multivectormatryoshkaloss">`MultiVectorMatryoshkaLoss`</a><br><a href="../package_reference/multi_vector_encoder/losses.html#multivectortokenpoolingloss">`MultiVectorTokenPoolingLoss`</a> |
+
+See the [Matryoshka](../../examples/multi_vector_encoder/training/matryoshka/README.md) and [token pooling](../../examples/multi_vector_encoder/training/token_pooling/README.md) examples for training comparisons, measured results, and inference.
+
 ## Commonly used Loss Functions
 
 In practice, not all loss functions get used equally often. The most common scenarios are:

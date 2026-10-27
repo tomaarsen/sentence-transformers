@@ -232,6 +232,22 @@ def uses_gradient_cache(loss: Any) -> bool:
     return getattr(loss, "uses_gradient_cache", False)
 
 
+def resolve_gradient_cache_loss(loss: Any) -> Any:
+    """The loss whose ``calculate_loss`` drives a gradient-cached backward pass.
+
+    A wrapper loss that decorates ``calculate_loss`` (e.g. a Matryoshka-style loss modifier) must
+    patch it on the loss that actually calls it, which is the innermost wrapped loss: patching a
+    wrapper's own attribute would never be reached. Wrapper losses forward ``uses_gradient_cache``
+    but define no ``calculate_loss`` of their own and hold the wrapped loss in ``.loss``, so descend
+    through those until an object providing ``calculate_loss`` is found. This is what lets two such
+    wrappers stack around one cached loss: each patches the same innermost method in turn.
+    """
+    target = loss
+    while not hasattr(target, "calculate_loss") and hasattr(target, "loss"):
+        target = target.loss
+    return target
+
+
 def _minibatch_ranges(
     sentence_feature: dict[str, Any],
     mini_batch_size: int,

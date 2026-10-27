@@ -13,11 +13,16 @@ TEXTS = [
 ]
 
 
-def test_multi_process_matches_single_process(mve_bert_tiny_model: MultiVectorEncoder) -> None:
+@pytest.mark.parametrize("truncate_dim", [None, 64])
+@pytest.mark.parametrize("default_truncate_dim", [None, 32])
+def test_multi_process_matches_single_process(
+    mve_bert_tiny_model: MultiVectorEncoder, truncate_dim: int | None, default_truncate_dim: int | None
+) -> None:
     model = mve_bert_tiny_model
+    model.truncate_dim = default_truncate_dim
     model.to("cpu")
-    direct = model.encode_document(TEXTS)
-    pooled = model.encode_document(TEXTS, device=["cpu", "cpu"])
+    direct = model.encode_document(TEXTS, truncate_dim=truncate_dim)
+    pooled = model.encode_document(TEXTS, device=["cpu", "cpu"], truncate_dim=truncate_dim)
     assert len(pooled) == len(direct)
     for direct_emb, pooled_emb in zip(direct, pooled):
         assert torch.allclose(direct_emb, pooled_emb, atol=1e-5)

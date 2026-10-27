@@ -21,6 +21,9 @@ class SequentialEvaluator(BaseEvaluator):
         main_score_function (function, optional): A function that takes a list of scores and returns the main score.
             Defaults to selecting the last score in the list.
 
+    Raises:
+        ValueError: If sub-evaluators return duplicate metric keys. Give evaluators unique names to avoid collisions.
+
     Example:
         ::
 
@@ -38,7 +41,7 @@ class SequentialEvaluator(BaseEvaluator):
     def __call__(
         self, model: BaseModel, output_path: str | None = None, epoch: int = -1, steps: int = -1
     ) -> dict[str, float]:
-        evaluations = []
+        results = {}
         scores = []
         for evaluator_idx, evaluator in enumerate(self.evaluators):
             evaluation = evaluator(model, output_path, epoch, steps)
@@ -52,13 +55,17 @@ class SequentialEvaluator(BaseEvaluator):
                 else:
                     scores.append(evaluation[list(evaluation.keys())[0]])
 
-            evaluations.append(evaluation)
+            if duplicates := results.keys() & evaluation.keys():
+                raise ValueError(
+                    f"Duplicate metric key {sorted(duplicates)[0]!r} in SequentialEvaluator. "
+                    "Give each evaluator a unique name."
+                )
+            results.update(evaluation)
 
         self.primary_metric = "sequential_score"
         if not scores:
             main_score = 0.0
         else:
             main_score = self.main_score_function(scores)
-        results = {key: value for evaluation in evaluations for key, value in evaluation.items()}
         results["sequential_score"] = main_score
         return results
