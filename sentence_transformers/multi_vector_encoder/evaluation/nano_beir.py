@@ -120,6 +120,7 @@ class MultiVectorNanoBEIREvaluator(NanoBEIREvaluator):
             # metric-key parsing invariant that the aggregate name has exactly one underscore-
             # separated segment more than each subset name.
             self.name += f"_{pooling_name_suffix(token_pooling)}"
+        self.csv_file = f"NanoBEIR_evaluation_{self.name.removeprefix('NanoBEIR_')}_results.csv"
         if name:
             self.name = f"{name}_{self.name}"
             self.csv_file = f"{name}_{self.csv_file}"
