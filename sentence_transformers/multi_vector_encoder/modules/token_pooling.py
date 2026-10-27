@@ -376,10 +376,8 @@ class HierarchicalTokenPooling(BaseTokenPooling):
     ) -> float | None:
         """Choose a Ward distance threshold for an average document token budget.
 
-        Computes each calibration document's Ward tree once and selects a shared distance
-        threshold from its merge heights. The calibration average is at most ``target_tokens``.
-        Tied merge heights can cause additional compression. Individual documents and new corpora
-        can exceed the target. Calibration uses only embeddings, without queries or relevance labels.
+        The calibration average is at most ``target_tokens``. Individual documents and the
+        average on a different corpus can exceed the target.
 
         Args:
             embeddings: Representative, unpadded ``(num_tokens, dim)`` document embeddings from

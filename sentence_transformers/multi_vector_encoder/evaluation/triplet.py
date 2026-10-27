@@ -24,11 +24,9 @@ class MultiVectorTripletEvaluator(TripletEvaluator):
     Given ``(anchor, positive, negative)`` triplets, checks how often
     ``MaxSim(anchor, positive) > MaxSim(anchor, negative) + margin``. The anchors are encoded via
     :meth:`encode_query` (with the query prefix and length). Positives and negatives are encoded via
-    :meth:`encode_document`. ``truncate_dim`` truncates every token embedding and L2-normalizes it
-    again before scoring (the
-    :class:`~sentence_transformers.multi_vector_encoder.losses.MultiVectorMatryoshkaLoss` inference
-    recipe), and ``token_pooling`` applies a token pooling setup per encode call, exactly like
-    ``encode(token_pooling=...)`` (the pooling's ``tasks`` decide which side it compresses).
+    :meth:`encode_document`. ``truncate_dim`` truncates and L2-normalizes token embeddings, while
+    ``token_pooling`` applies pooling according to the pooler's ``tasks``. When None, both use the
+    model's encoding defaults.
 
     A ``margin`` dictionary must be keyed by a supported similarity, ``maxsim`` or ``meanmaxsim`` (a
     float applies to both). The two need different margins: MaxSim sums a per-token maximum over the

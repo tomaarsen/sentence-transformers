@@ -85,13 +85,10 @@ class MultiVectorMatryoshkaLoss(nn.Module):
             +---------------------------------------+--------+
 
         Relations:
-            - The dense counterpart is
-              :class:`~sentence_transformers.sentence_transformer.losses.MatryoshkaLoss`, which
-              truncates the pooled sentence embedding instead of every token embedding.
-            - :class:`MultiVectorTokenPoolingLoss` is the other multi-vector loss modifier. It
-              compresses the token axis where this loss compresses the dimension axis, and the two
-              can be stacked. Wrap this loss with ``MultiVectorTokenPoolingLoss`` so pooling
-              precedes truncation, matching ``MultiVectorEncoder.encode``.
+            - :class:`~sentence_transformers.sentence_transformer.losses.MatryoshkaLoss` is the
+              single-vector counterpart.
+            - Wrap this loss with :class:`MultiVectorTokenPoolingLoss` so pooling precedes
+              truncation, matching ``MultiVectorEncoder.encode``.
 
         Example:
             ::

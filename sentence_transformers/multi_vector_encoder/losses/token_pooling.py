@@ -152,9 +152,7 @@ class MultiVectorTokenPoolingLoss(nn.Module):
               a baked-in pooling module would compound with every variant.
 
         Relations:
-            - :class:`MultiVectorMatryoshkaLoss` is the other multi-vector loss modifier. It
-              compresses the dimension axis where this loss compresses the token axis, and the two
-              can be stacked. Wrap ``MultiVectorMatryoshkaLoss`` with this loss so pooling
+            - Wrap :class:`MultiVectorMatryoshkaLoss` with this loss so pooling
               precedes truncation, matching ``MultiVectorEncoder.encode``.
 
         Example:

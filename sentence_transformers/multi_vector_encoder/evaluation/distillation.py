@@ -79,15 +79,10 @@ class MultiVectorDistillationEvaluator(BaseEvaluator):
         batch_size: Batch size for encoding.
         show_progress_bar: Whether to show a progress bar.
         write_csv: Whether to write per-call results to a CSV file under ``output_path``.
-        truncate_dim: Truncate every token embedding to this dimension and L2-normalize it again
-            before scoring, the inference recipe for models trained with
-            :class:`~sentence_transformers.multi_vector_encoder.losses.MultiVectorMatryoshkaLoss`.
-            Defaults to None (score at the full dimension).
-        token_pooling: A token pooling setup (e.g.
-            :class:`~sentence_transformers.multi_vector_encoder.modules.HierarchicalTokenPooling`)
-            applied per encode call, exactly like ``encode(token_pooling=...)``: the pooling's
-            ``tasks`` decide which side it compresses (documents only, by default). Defaults to
-            None (no pooling).
+        truncate_dim: Truncate and L2-normalize each token embedding before scoring.
+            Defaults to None (use the model's default dimension).
+        token_pooling: Pooling applied during encoding. The pooler's ``tasks`` select which inputs
+            are pooled. Defaults to None (use the model's default pooler).
 
     Example:
         ::

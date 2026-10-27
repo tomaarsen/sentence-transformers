@@ -48,22 +48,14 @@ class MultiVectorNanoBEIREvaluator(NanoBEIREvaluator):
         batch_size (int): Per-input batch size used while encoding. Defaults to 32.
         write_csv (bool): Append per-call metric values to a CSV file (one row per evaluation call).
             Defaults to True.
-        truncate_dim (int, optional): Truncate every token embedding to this dimension and
-            L2-normalize it again before scoring, the inference recipe for models trained with
-            :class:`~sentence_transformers.multi_vector_encoder.losses.MultiVectorMatryoshkaLoss`.
-            The dimension is appended to the evaluator names, so several truncation settings can be
-            evaluated side by side. Defaults to None (score at the full dimension).
-        token_pooling (BaseTokenPooling, optional): A token pooling setup (e.g.
-            :class:`~sentence_transformers.multi_vector_encoder.modules.HierarchicalTokenPooling`)
-            applied per encode call, exactly like ``encode(token_pooling=...)``: the pooling's
-            ``tasks`` decide which side it compresses (documents only, by default). A short pooling
-            name (e.g. ``pool_factor_2``) is appended to the evaluator names, so several pooling
-            settings can be evaluated side by side, e.g. for models trained with
-            :class:`~sentence_transformers.multi_vector_encoder.losses.MultiVectorTokenPoolingLoss`.
-            Defaults to None (no pooling).
+        truncate_dim (int, optional): Truncate and L2-normalize each token embedding before scoring.
+            An explicit dimension is appended to evaluator names. Defaults to None (use the model's
+            default dimension).
+        token_pooling (BaseTokenPooling, optional): Pooling applied during encoding. The pooler's
+            ``tasks`` select which inputs are pooled. Explicit poolers add a short configuration label
+            to evaluator names. Defaults to None (use the model's default pooler).
         name (str): Optional prefix for aggregate and per-dataset metric names and output files.
-            Use distinct names when comparing poolers with the same short pooling label, such as
-            document-only and query-plus-document pooling with the same token cap. Defaults to "".
+            Use distinct names for poolers with the same short configuration label. Defaults to "".
         score_functions (Dict[str, Callable], optional): Override the default per-subset scoring.
             See :class:`MultiVectorInformationRetrievalEvaluator`. Defaults to None.
         main_score_function (str or SimilarityFunction, optional): Score-function key to treat as the

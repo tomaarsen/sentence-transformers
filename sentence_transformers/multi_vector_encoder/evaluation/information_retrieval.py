@@ -60,18 +60,10 @@ class MultiVectorInformationRetrievalEvaluator(InformationRetrievalEvaluator):
             Defaults to ``""``.
         write_csv (bool): Append per-call metric values to ``Information-Retrieval_evaluation_<name>_results.csv``.
             Defaults to True.
-        truncate_dim (int, optional): Truncate every token embedding to this dimension and
-            L2-normalize it again before scoring, the inference recipe for models trained with
-            :class:`~sentence_transformers.multi_vector_encoder.losses.MultiVectorMatryoshkaLoss`.
-            Defaults to None (score at the full dimension).
-        token_pooling (BaseTokenPooling, optional): A token pooling setup (e.g.
-            :class:`~sentence_transformers.multi_vector_encoder.modules.HierarchicalTokenPooling`)
-            applied per encode call, exactly like ``encode(token_pooling=...)``: the pooling's
-            ``tasks`` decide which side it compresses (documents only, by default). Use it to
-            measure how well the model retrieves from a pooled document index, e.g. for models
-            trained with
-            :class:`~sentence_transformers.multi_vector_encoder.losses.MultiVectorTokenPoolingLoss`.
-            Defaults to None (no pooling).
+        truncate_dim (int, optional): Truncate and L2-normalize each token embedding before scoring.
+            Defaults to None (use the model's default dimension).
+        token_pooling (BaseTokenPooling, optional): Pooling applied during encoding. The pooler's
+            ``tasks`` select which inputs are pooled. Defaults to None (use the model's default pooler).
         main_score_function (str or SimilarityFunction, optional): Which score-function key to treat
             as the primary metric for the model card / trainer. Defaults to None (use the first /
             only key in ``score_functions``).
