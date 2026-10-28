@@ -127,6 +127,7 @@ A fixed cap like `max_tokens` allocates the same maximum number of vectors to ev
 The storage produced by a threshold depends on the encoder and its document embeddings, so calibration translates an average vector budget into a suitable threshold. Encode a representative sample of your documents without pooling, then use `HierarchicalTokenPooling.calibrate_distance_threshold` to choose a threshold targeting an average of 16 vectors per document:
 
 ```python
+# Assumes the model was loaded without a token_pooling parameter
 calibration_embeddings = model.encode_document(calibration_documents)
 threshold = HierarchicalTokenPooling.calibrate_distance_threshold(calibration_embeddings, target_tokens=16)
 print(threshold)
