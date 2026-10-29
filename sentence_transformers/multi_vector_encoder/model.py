@@ -253,10 +253,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[False] = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> Tensor: ...
 
@@ -273,10 +273,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[True],
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> np.ndarray: ...
 
@@ -293,10 +293,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> dict[str, Tensor]: ...
 
@@ -312,10 +312,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[False] = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor]: ...
 
@@ -332,10 +332,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[True],
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[np.ndarray]: ...
 
@@ -352,10 +352,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[dict[str, Tensor]]: ...
 
@@ -372,10 +372,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]: ...
 
@@ -390,10 +390,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = False,
         device: str | torch.device | list[str | torch.device] | None = None,
         normalize_embeddings: bool = False,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = None,
-        chunk_size: int | None = None,
         token_pooling: BaseTokenPooling | None = None,
         truncate_dim: int | None = None,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = None,
+        chunk_size: int | None = None,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]:
         """Compute query embeddings. Uses the "query" prompt and routes through the query side.
@@ -418,10 +418,10 @@ class MultiVectorEncoder(BaseModel):
             convert_to_numpy=convert_to_numpy,
             device=device,
             normalize_embeddings=normalize_embeddings,
-            pool=pool,
-            chunk_size=chunk_size,
             token_pooling=token_pooling,
             truncate_dim=truncate_dim,
+            pool=pool,
+            chunk_size=chunk_size,
             task="query",
             **kwargs,
         )
@@ -438,10 +438,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[False] = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> Tensor: ...
 
@@ -458,10 +458,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[True],
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> np.ndarray: ...
 
@@ -478,10 +478,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> dict[str, Tensor]: ...
 
@@ -497,10 +497,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[False] = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor]: ...
 
@@ -517,10 +517,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[True],
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[np.ndarray]: ...
 
@@ -537,10 +537,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[dict[str, Tensor]]: ...
 
@@ -557,10 +557,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
-        chunk_size: int | None = ...,
         token_pooling: BaseTokenPooling | None = ...,
         truncate_dim: int | None = ...,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
+        chunk_size: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]: ...
 
@@ -575,10 +575,10 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = False,
         device: str | torch.device | list[str | torch.device] | None = None,
         normalize_embeddings: bool = False,
-        pool: dict[Literal["input", "output", "processes"], Any] | None = None,
-        chunk_size: int | None = None,
         token_pooling: BaseTokenPooling | None = None,
         truncate_dim: int | None = None,
+        pool: dict[Literal["input", "output", "processes"], Any] | None = None,
+        chunk_size: int | None = None,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]:
         """Compute document embeddings. Uses the first available of ``"document"`` / ``"passage"`` / ``"corpus"``
@@ -607,10 +607,10 @@ class MultiVectorEncoder(BaseModel):
             convert_to_numpy=convert_to_numpy,
             device=device,
             normalize_embeddings=normalize_embeddings,
-            pool=pool,
-            chunk_size=chunk_size,
             token_pooling=token_pooling,
             truncate_dim=truncate_dim,
+            pool=pool,
+            chunk_size=chunk_size,
             task="document",
             **kwargs,
         )
@@ -627,11 +627,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[False] = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
+        token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
-        token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
-        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> Tensor: ...
 
@@ -648,11 +648,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[True],
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
+        token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
-        token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
-        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> np.ndarray: ...
 
@@ -669,11 +669,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
+        token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
-        token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
-        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> dict[str, Tensor]: ...
 
@@ -689,11 +689,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[False] = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
+        token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
-        token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
-        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor]: ...
 
@@ -710,11 +710,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: Literal[True],
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
+        token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
-        token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
-        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[np.ndarray]: ...
 
@@ -731,11 +731,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
+        token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
-        token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
-        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[dict[str, Tensor]]: ...
 
@@ -752,11 +752,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = ...,
         device: str | torch.device | list[str | torch.device] | None = ...,
         normalize_embeddings: bool = ...,
+        token_pooling: BaseTokenPooling | None = ...,
+        truncate_dim: int | None = ...,
         pool: dict[Literal["input", "output", "processes"], Any] | None = ...,
         chunk_size: int | None = ...,
-        token_pooling: BaseTokenPooling | None = ...,
         task: str | None = ...,
-        truncate_dim: int | None = ...,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]: ...
 
@@ -771,11 +771,11 @@ class MultiVectorEncoder(BaseModel):
         convert_to_numpy: bool = False,
         device: str | torch.device | list[str | torch.device] | None = None,
         normalize_embeddings: bool = False,
+        token_pooling: BaseTokenPooling | None = None,
+        truncate_dim: int | None = None,
         pool: dict[Literal["input", "output", "processes"], Any] | None = None,
         chunk_size: int | None = None,
-        token_pooling: BaseTokenPooling | None = None,
         task: str | None = None,
-        truncate_dim: int | None = None,
         **kwargs: Any,
     ) -> list[Tensor] | list[np.ndarray] | Tensor | np.ndarray | list[dict[str, Tensor]] | dict[str, Tensor]:
         """Compute multi-vector token-level embeddings.
@@ -812,8 +812,6 @@ class MultiVectorEncoder(BaseModel):
             normalize_embeddings (bool, optional): If True, L2-normalize each per-token embedding after
                 the pipeline and before per-call token pooling. Use this when the loaded pipeline does
                 not include a :class:`Normalize` module but you still want unit-norm vectors. Defaults to False.
-            pool (dict, optional): A multi-process pool created via :meth:`start_multi_process_pool`.
-            chunk_size (int, optional): Chunk size for multi-process encoding.
             token_pooling (BaseTokenPooling, optional): Per-call token pooling applied after the pipeline
                 to embeddings whose ``task`` is in the pooling's ``tasks`` (by default only
                 documents). If the model already bakes a pooling into its pipeline, this
@@ -821,11 +819,13 @@ class MultiVectorEncoder(BaseModel):
                 discoverable. With ``output_value=None``, applied to the raw dicts
                 (``token_embeddings`` and ``attention_mask`` are rewritten). If None, uses the
                 model's default pooler.
-            task (str, optional): One of ``"query"``, ``"document"``. Sets the prefix / length /
-                masking strategy.
             truncate_dim (int, optional): Truncate and L2-normalize token embeddings after per-call
                 pooling, including with ``output_value=None``. If None, uses the model's default
                 ``truncate_dim``.
+            pool (dict, optional): A multi-process pool created via :meth:`start_multi_process_pool`.
+            chunk_size (int, optional): Chunk size for multi-process encoding.
+            task (str, optional): One of ``"query"``, ``"document"``. Sets the prefix / length /
+                masking strategy.
 
         Returns:
             list[Tensor] | list[ndarray] | Tensor | ndarray: By default, a list of per-input 2D tensors of
