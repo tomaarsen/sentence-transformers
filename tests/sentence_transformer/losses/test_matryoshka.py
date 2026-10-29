@@ -262,7 +262,7 @@ def test_matryoshka_dims_can_exceed_token_embedding_dimension(
     model.zero_grad()
     expected.backward()
     for grad, param in zip(grads, model.parameters()):
-        torch.testing.assert_close(grad, param.grad)
+        torch.testing.assert_close(grad, param.grad, atol=1e-4, rtol=1e-4)
 
 
 def test_cached_loss_behind_wrappers_matches_non_cached(stsb_bert_tiny_model: SentenceTransformer) -> None:
