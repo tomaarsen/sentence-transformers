@@ -40,7 +40,7 @@ def main():
     dataset = dataset.select(range(num_train_samples + 1_000)).train_test_split(test_size=1_000, seed=42)
 
     # 3. Change only the loss for the baseline
-    pooling = HierarchicalTokenPooling(max_tokens=16)
+    pooling = HierarchicalTokenPooling(pool_factor=4)
     loss = CachedMultiVectorMultipleNegativesRankingLoss(model, mini_batch_size=64)
     if not cli.baseline:
         loss = MultiVectorTokenPoolingLoss(

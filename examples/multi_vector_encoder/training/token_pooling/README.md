@@ -1,21 +1,73 @@
-# Token Pooling-aware Training
+# Token Pooling-Aware Training
 
-A multi-vector retrieval model can represent a long document with hundreds of token vectors, many of which describe similar content. Token pooling merges these vectors to make the document index smaller and reduce the number of comparisons needed for MaxSim scoring. Compression can also remove distinctions that matter for retrieval, so pooling-aware training teaches the encoder to preserve useful information when its document vectors are merged.
+Token pooling merges similar token vectors to make multi-vector retrieval indexes smaller. Pooling-aware training teaches the encoder to preserve useful information when these vectors are merged, helping compressed representations remain effective for retrieval.
 
-This example uses `HierarchicalTokenPooling`, which groups similar token embeddings with Ward clustering and replaces each cluster with its normalized mean. Unlike [Matryoshka truncation](../matryoshka/README.md), which reduces the dimensionality of every vector, token pooling reduces how many vectors represent a document. Queries remain unpooled by default, preserving their individual token vectors for matching against the compressed documents. The encoder still runs its full backbone, and clustering adds work during indexing, with the savings coming from storing and scoring fewer document vectors.
+See the [Token Pooling-Aware Training blogpost](https://huggingface.co/blog/token-pooling) for a fuller explanation of the method and experiments.
 
-## Training embeddings that pool well
+## Token Pooling
 
-Ordinary retrieval training optimizes the original token embeddings, without requiring them to remain useful after pooling. `MultiVectorTokenPoolingLoss` adds that requirement by applying a retrieval loss to the pooled representations during training. In [training_cached_contrastive.py](training_cached_contrastive.py), the same batch contributes both an unpooled retrieval loss and a loss using at most 16 vectors per document:
+`HierarchicalTokenPooling` groups similar token embeddings with Ward clustering and replaces each cluster with its normalized mean. Unlike [Matryoshka truncation](../matryoshka/README.md), which reduces each vector's dimensionality, pooling reduces the number of vectors. Queries remain unpooled by default. The encoder still runs its full backbone, with savings coming from storing and scoring fewer document vectors.
+
+### Choosing a Pooling Budget
+
+`HierarchicalTokenPooling` offers three alternative controls:
+
+| Control | Effect | When to use it |
+| --- | --- | --- |
+| `max_tokens=16` | Keep at most 16 vectors, including protected tokens.<br>Shorter documents keep their existing vectors. | You want a per-document cap. |
+| `pool_factor=4` | Keep approximately one quarter<br>of each document's vectors. | You want compression proportional<br>to document length. |
+| `distance_threshold` | Merge up to a shared Ward distance threshold.<br>Vector counts depend on embedding geometry. | You want adaptive compression.<br>Calibrate it for an average vector budget. |
+
+Configure one control at a time. By default, the first token is protected from merging, and all output vectors are normalized. Short documents can bring the average vector count below a fixed cap.
+
+### Calibrating Adaptive Pooling
+
+Adaptive pooling allocates vectors according to embedding geometry and can be useful without pooling-aware training. Rather than choosing a distance threshold manually, calibrate it for a target average vector count using a representative sample in `calibration_documents`:
 
 ```python
+from sentence_transformers import MultiVectorEncoder
+from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
+
+model = MultiVectorEncoder("lightonai/LateOn")
+calibration_embeddings = model.encode_document(calibration_documents)
+threshold = HierarchicalTokenPooling.calibrate_distance_threshold(calibration_embeddings, target_tokens=16)
+pooling = HierarchicalTokenPooling(distance_threshold=threshold)
+
+# Apply pooling, targeting an average of 16 vectors per document
+document_embeddings = model.encode_document(documents_to_index, token_pooling=pooling)
+```
+
+Calibration only needs document embeddings. Individual documents can receive more or fewer than 16 vectors, and the average can change on another corpus. Calibration returns `None` if the target requires no compression.
+
+<details>
+<summary>Matching the storage of a fixed cap</summary>
+
+For a fair comparison, target the fixed cap's actual average count, which may be below its maximum:
+
+```python
+fixed_embeddings = HierarchicalTokenPooling(max_tokens=16).pool(calibration_embeddings)
+target_tokens = sum(map(len, fixed_embeddings)) / len(fixed_embeddings)
+threshold = HierarchicalTokenPooling.calibrate_distance_threshold(calibration_embeddings, target_tokens=target_tokens)
+pooling = HierarchicalTokenPooling(distance_threshold=threshold)
+```
+
+The calibrated results below match each corpus's average counts under caps of 64, 32, and 16.
+</details>
+
+## Training
+
+[training_cached_contrastive.py](training_cached_contrastive.py) averages an ordinary retrieval loss and a loss using approximately one quarter of each document's vectors:
+
+```python
+from sentence_transformers import MultiVectorEncoder
 from sentence_transformers.multi_vector_encoder.losses import (
     CachedMultiVectorMultipleNegativesRankingLoss,
     MultiVectorTokenPoolingLoss,
 )
 from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
 
-pooling = HierarchicalTokenPooling(max_tokens=16)
+model = MultiVectorEncoder("answerdotai/ModernBERT-base")
+pooling = HierarchicalTokenPooling(pool_factor=4)
 loss = CachedMultiVectorMultipleNegativesRankingLoss(model, mini_batch_size=64)
 loss = MultiVectorTokenPoolingLoss(
     model,
@@ -25,138 +77,103 @@ loss = MultiVectorTokenPoolingLoss(
 )
 ```
 
-`CachedMultiVectorMultipleNegativesRankingLoss` supplies the retrieval objective, teaching each query to score its relevant document above the negative documents in the batch. Gradient caching lets the encoder process 64 inputs at a time while each query is compared with documents from all 256 training examples, reducing training memory without reducing the number of negatives.
+`CachedMultiVectorMultipleNegativesRankingLoss` teaches each query to score its relevant document above negatives. Gradient caching processes 64 inputs at a time while comparing each query with documents from all 256 training examples.
 
-`MultiVectorTokenPoolingLoss` wraps that objective and evaluates it using each entry in `token_poolings`. Here, `None` uses the original embeddings without pooling, while `pooling` compresses documents to at most 16 vectors. The weights of `0.5` simply average the two retrieval losses, teaching the encoder to support compressed retrieval alongside ordinary retrieval. The variants reuse the token embeddings without an additional encoder pass for each pooler, although clustering and computing the extra retrieval loss add some overhead.
+[`MultiVectorTokenPoolingLoss`](../../../../docs/package_reference/multi_vector_encoder/losses.html#multivectortokenpoolingloss) applies that objective to each entry in `token_poolings`. Here, `None` uses the original embeddings and `pooling` supplies the factor-4 variant. The weights average their losses. Variants reuse the encoder's embeddings, adding clustering and scoring work without a separate encoder pass per pooler.
 
-The entries in `token_poolings` can also be custom `BaseTokenPooling` implementations, provided they preserve gradients through the input embeddings. With `HierarchicalTokenPooling`, Ward clustering makes discrete choices about which tokens to merge. During training, it uses a straight-through estimator to pass gradients back to the token embeddings without differentiating those cluster assignments. Each cluster member receives the gradient through its pooled representation, allowing the encoder to learn from errors made with compressed documents.
+Custom `BaseTokenPooling` implementations can be used if they preserve gradients through the input embeddings. `HierarchicalTokenPooling` uses a straight-through estimator to pass gradients back to cluster members without differentiating Ward's discrete assignments.
 
-The example script learns retrieval and poolability together from MS MARCO triplets, starting with `answerdotai/ModernBERT-base` and a fresh 128-dimensional token projection. The same loss wrapper can also fine-tune an existing retrieval model. Setting `query_expansion={"strategy": "min", "length": 32}` provides additional contextual query vectors by expanding short queries to at least 32 token positions, while longer queries retain their length up to the training token cap. To optimize for another deployment constraint, replace the 16-vector pooler with your chosen pooler, e.g. a `HierarchicalTokenPooling` with a different `max_tokens`, `pool_factor`, or `distance_threshold` setting.
+The script starts from `answerdotai/ModernBERT-base` with a fresh 128-dimensional projection. Short queries are expanded to at least 32 token positions to provide additional contextual query vectors. You can also fine-tune an existing retrieval model or replace the factor-4 pooler with your deployment configuration.
 
-Run the training script with and without `--baseline` to compare the effect of pooling-aware training:
+Run both variants for a matched comparison:
 
 ```bash
 python -m examples.multi_vector_encoder.training.token_pooling.training_cached_contrastive --baseline
 python -m examples.multi_vector_encoder.training.token_pooling.training_cached_contrastive
 ```
 
-Both commands use the same initialization, data, and optimization settings, with `--baseline` changing only the loss. Small MS MARCO NanoBEIR evaluations track unpooled and 16-vector retrieval alongside held-out validation loss, helping you check whether the compressed representations are learning to retrieve. You can adapt the model, poolers, and training settings directly in the script, keeping both runs matched when comparing losses. It saves the encoder under `models/<run_name>/final` and attempts a Hub upload using your `hf auth login` credentials.
+`--baseline` changes only the loss, keeping initialization, data, and optimization settings matched. MS MARCO NanoBEIR evaluations track unpooled and factor-4 retrieval alongside validation loss during training. Edit the script to adapt the setup. It saves the final encoder and attempts a Hub upload using your `hf auth login` credentials.
 
-## Applying token pooling
+## Using the Trained Model
 
-Load the example model from the Hub or your own saved encoder, then pass the pooler when encoding documents:
+Pass the pooler when encoding documents:
 
 ```python
 from sentence_transformers import MultiVectorEncoder
 from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
 
 model = MultiVectorEncoder("tomaarsen/mve-ModernBERT-base-token-pooling")
-pooling = HierarchicalTokenPooling(max_tokens=16)
+pooling = HierarchicalTokenPooling(pool_factor=4)
 
-query_embeddings = model.encode_query(["How can I make a retrieval index smaller?"])
-document_embeddings = model.encode_document(
-    [
-        "Token pooling merges similar token embeddings into fewer vectors, reducing document index storage.",
-        "Paris is the capital of France.",
-    ],
-    token_pooling=pooling,
-)
-scores = model.similarity(query_embeddings, document_embeddings)
-print(scores)
+queries = ["Which planet is known as the Red Planet?"]
+documents = [
+    "Venus is often called Earth's twin because of its similar size and proximity.",
+    "Mars, known for its reddish appearance, is often referred to as the Red Planet.",
+    "Jupiter, the largest planet in our solar system, has a prominent red spot.",
+]
+
+query_embeddings = model.encode_query(queries)
+document_embeddings = model.encode_document(documents, token_pooling=pooling)
+
+print([len(embedding) for embedding in document_embeddings])
+# [5, 6, 5]
+print(model.similarity(query_embeddings, document_embeddings))
+# tensor([[16.0037, 25.9879, 22.8159]], device='cuda:0')
+
+# For comparison, the same model without token pooling:
+# [18, 21, 19]
+# tensor([[16.6115, 27.6060, 24.1766]], device='cuda:0')
 ```
 
-The loss teaches the encoder to work with pooled embeddings, while `token_pooling` selects the compression applied at inference. Saving the encoder does not automatically enable the poolers used in its training loss. Apply the same pooling configuration when building the document index that you evaluated for deployment.
+Pooling reduces the total from 58 vectors to 16 while preserving the ranking: Mars scores highest, followed by Jupiter and Venus. Query embeddings remain unchanged.
 
-To use a pooler by default, pass it when initializing the encoder:
+You can change the pooling configuration at inference. For repeated use, pass `token_pooling=pooling` to the `MultiVectorEncoder` constructor to make it the runtime default, with the pooler's `tasks` controlling which inputs are compressed.
 
-```python
-model = MultiVectorEncoder("tomaarsen/mve-ModernBERT-base-token-pooling", token_pooling=pooling)
-```
+## Evaluation Results
 
-Calls to `encode`, `encode_query`, and `encode_document` then use this default, with the pooler's `tasks` still deciding which inputs are pooled. Pass another pooler to override it for a call, or set `model.token_pooling = None` to clear the default. To save pooling as part of the model, add the pooler to its module pipeline instead.
-
-With `HierarchicalTokenPooling`, choose one of the three pooling controls according to the constraint you want to express:
-
-| Control | Effect | When to use it |
-| --- | --- | --- |
-| `max_tokens=16` | Keep at most 16 vectors, including protected tokens.<br>Shorter documents keep their existing vectors. | You want a per-document cap. |
-| `pool_factor=4` | Keep approximately one quarter<br>of each document's vectors. | You want compression proportional<br>to document length. |
-| `distance_threshold` | Merge up to a shared Ward distance threshold.<br>Vector counts depend on embedding geometry. | You want adaptive compression.<br>Calibrate it for an average vector budget. |
-
-These controls are alternatives, so configure one at a time. By default, the first token is protected from merging, and all output vectors are normalized. A cap of 16 can therefore average fewer than 16 vectors per document because shorter documents already fit within the budget.
-
-## Measuring the quality and storage tradeoff
-
-[evaluate_token_pooling.py](evaluate_token_pooling.py) compares unpooled retrieval with document caps of 64, 32, 16, 8, and 4 vectors on all 13 NanoBEIR datasets. Running it on any multi-vector embedding model shows how much quality is retained at the compression you intend to deploy, and you can edit the poolers and evaluation settings to suit your model and use case. For example, compare the pooling-aware model with its baseline:
+[evaluate_token_pooling.py](evaluate_token_pooling.py) evaluates any multi-vector model on all 13 NanoBEIR datasets, using unpooled retrieval, caps of 64, 32, 16, 8, and 4 vectors, and pool factors of 2 through 6. Edit the settings to explore your deployment budget:
 
 ```bash
 python -m examples.multi_vector_encoder.training.token_pooling.evaluate_token_pooling tomaarsen/mve-ModernBERT-base-token-pooling
 python -m examples.multi_vector_encoder.training.token_pooling.evaluate_token_pooling tomaarsen/mve-ModernBERT-base-token-pooling-baseline
 ```
 
-The comparison below uses matched training on 120,000 MS MARCO triplets with seed 42 and the final checkpoints. Scores are mean nDCG@10 (%) across the 13 NanoBEIR datasets, with FP32 inference and storage compared at unchanged embedding dimensionality and numeric precision. Mean vectors is the average number of document vectors across the evaluation corpora.
+Both models below were trained on the same 120,000 MS MARCO triplets with seed 42, changing only the loss. Scores are mean nDCG@10 (%) with FP32 inference. Mean vectors is the average number of document vectors across the evaluation corpora, at unchanged dimensionality and precision.
 
-| Pooling at inference | Mean vectors | Ordinary loss | Pooling-aware loss | Gain (points) |
+| Pooling at inference | Mean vectors | Ordinary model | Pooling-aware model | Gain (points) |
 | --- | ---: | ---: | ---: | ---: |
-| Unpooled | 193.22 | 51.84 | 52.04 | +0.19 |
-| `max_tokens=64` | 54.76 | 49.27 | 51.34 | +2.07 |
-| `max_tokens=32` | 29.58 | 48.25 | 50.69 | +2.44 |
-| `max_tokens=16` | 15.60 | 46.61 | 49.87 | +3.26 |
-| `max_tokens=8` | 7.99 | 43.12 | 47.42 | +4.30 |
-| `max_tokens=4` | 4.00 | 37.22 | 45.40 | +8.18 |
-| `pool_factor=4` | 48.68 | 49.03 | 51.61 | +2.58 |
-| Calibrated `distance_threshold` | 15.60 | 47.23 | 50.19 | +2.96 |
+| Unpooled | 193.22 | 51.84 | 52.39 | +0.55 |
+| `pool_factor=2` | 96.86 | 50.10 | 51.74 | +1.64 |
+| `pool_factor=3` | 64.74 | 49.70 | 51.45 | +1.76 |
+| `pool_factor=4` | 48.68 | 49.03 | 51.23 | +2.20 |
+| `pool_factor=5` | 39.04 | 48.13 | 50.28 | +2.15 |
+| `pool_factor=6` | 32.62 | 47.07 | 49.85 | +2.78 |
+| `max_tokens=64` | 54.76 | 49.27 | 50.89 | +1.63 |
+| `max_tokens=32` | 29.58 | 48.25 | 50.12 | +1.87 |
+| `max_tokens=16` | 15.60 | 46.61 | 49.26 | +2.65 |
+| `max_tokens=8` | 7.99 | 43.12 | 46.61 | +3.48 |
+| `max_tokens=4` | 4.00 | 37.22 | 43.00 | +5.78 |
+| `distance_threshold` (calibrated) | 54.76 | 50.10 | 51.24 | +1.14 |
+| `distance_threshold` (calibrated) | 29.58 | 48.38 | 50.96 | +2.58 |
+| `distance_threshold` (calibrated) | 15.60 | 47.23 | 49.63 | +2.41 |
 
-![Retrieval quality versus document vector storage](results.png)
+![Ordinary versus pooling-aware training with proportional token pooling](results.png)
 
-At the trained 16-vector cap, pooling-aware training improves retrieval from 46.61 to 49.87 while reducing document vector storage by 12.4x relative to unpooled retrieval. The pooling-aware encoder at 8 vectors also outperforms the ordinary encoder at 16 vectors, illustrating how training can make a smaller index more useful. Training covered unpooled retrieval and the 16-vector cap, while the other settings show how well the learned embeddings transfer to compression settings they were not explicitly trained for. The figure and evaluation script cover the fixed caps, with the table also including proportional and adaptive pooling.
+At the trained `pool_factor=4`, pooling-aware training improves nDCG@10 from 49.03 to 51.23 with a 4-fold reduction in document vectors relative to unpooled retrieval. Score retention rises from 94.6% to 97.8%, measured against each model's own unpooled mean nDCG@10.
 
-The calibrated row uses one shared `distance_threshold` per encoder and NanoBEIR corpus, chosen from that corpus's unpooled document embeddings to match the average vector count under `max_tokens=16`. Documents can receive more or fewer than 16 vectors, while using approximately the same average storage. The next section shows how to choose this threshold without relevance labels or additional training.
+The gains transfer to other settings. Adaptive pooling at 29.58 vectors per document retains 97.3% of the pooling-aware model's unpooled score while storing 84.7% fewer vectors. Each calibrated threshold is shared across its corpus and matches the average storage of the corresponding fixed cap.
 
-MS MARCO, Natural Questions, and FiQA were used for recipe development, and the full suite also informed exploratory experiments. These are therefore exploratory results on a small benchmark. A separate check with the trained models used official test queries outside NanoBEIR and each dataset's full corpus, retaining graded relevance. Both comparisons below use the 16-vector cap and the same seed-42 models:
+These are illustrative models with room for stronger training recipes, as the `MultiVectorTokenPoolingLoss` loss wrapper can wrap any multi-vector loss.
 
-| Additional queries | Queries | Ordinary loss | Pooling-aware loss | Gain (points) |
-| --- | ---: | ---: | ---: | ---: |
-| [SciFact](https://huggingface.co/datasets/BeIR/scifact) | 250 | 59.48 | 60.73 | +1.25 |
-| [NFCorpus](https://huggingface.co/datasets/BeIR/nfcorpus) | 273 | 26.12 | 26.96 | +0.83 |
+## Combining Compression Techniques
 
-## Calibrating adaptive pooling
+For smaller indexes, consider these options in this order:
 
-A fixed cap like `max_tokens` allocates the same maximum number of vectors to every document, even when some documents contain many similar token embeddings and others contain more distinct information. Adaptive pooling instead uses a shared `distance_threshold` to decide when to stop merging. Documents whose embeddings can be merged at smaller Ward distances receive fewer vectors, while those requiring larger merge distances retain more. This differs from `pool_factor`, which reduces the vector count according to document length.
+1. Quantization to 4, 2, or 1 bit, for example via [Fast-PLAID](https://github.com/lightonai/fast-plaid).
+2. Token pooling, optionally with pooling-aware fine-tuning.
+3. [Matryoshka token embeddings](../matryoshka/README.md), optionally with fine-tuning, to reduce each vector's dimensionality.
 
-The storage produced by a threshold depends on the encoder and its document embeddings, so calibration translates an average vector budget into a suitable threshold. Encode a representative sample of your documents without pooling, then use `HierarchicalTokenPooling.calibrate_distance_threshold` to choose a threshold targeting an average of 16 vectors per document:
-
-```python
-# Assumes the model was loaded without a token_pooling parameter
-calibration_embeddings = model.encode_document(calibration_documents)
-threshold = HierarchicalTokenPooling.calibrate_distance_threshold(calibration_embeddings, target_tokens=16)
-print(threshold)
-# e.g. 0.2843...
-pooling = HierarchicalTokenPooling(distance_threshold=threshold)
-document_embeddings = model.encode_document(documents_to_index, token_pooling=pooling)
-```
-
-Calibration uses only document embeddings to choose a threshold you can reuse in your pooling configuration. If no compression is needed to meet the budget, it returns `None`. Individual documents can exceed the average budget, and the achieved average can change on a different corpus, so evaluate the calibrated pooler on the documents you expect to index.
-
-<details>
-<summary>Matching the average storage of a fixed cap for a fair comparison</summary>
-
-A cap of `max_tokens=16` often averages fewer than 16 vectors because short documents already contain fewer vectors. To compare adaptive pooling at the same average storage, first measure the fixed cap's output on the calibration documents, then use that average as the calibration target:
-
-```python
-fixed_embeddings = HierarchicalTokenPooling(max_tokens=16).pool(calibration_embeddings)
-target_tokens = sum(map(len, fixed_embeddings)) / len(fixed_embeddings)  # e.g. 15.6
-threshold = HierarchicalTokenPooling.calibrate_distance_threshold(calibration_embeddings, target_tokens=target_tokens)
-pooling = HierarchicalTokenPooling(distance_threshold=threshold)
-```
-
-This is how the calibrated row in the results table was measured, targeting 15.60 vectors overall. Those measurements use each dataset's complete corpus for calibration, while a representative sample can be used for your own index.
-</details>
-<br>
-
-## Combining compression methods
-
-Token pooling reduces the number of document vectors, while [Matryoshka training](../matryoshka/README.md) reduces their dimensionality and index quantization reduces the bits stored per coordinate. These choices address different parts of index storage and can be combined. Measure retrieval quality with the combination you intend to deploy, since each compression step can discard information needed to distinguish relevant documents.
+For models with more than 128 dimensions, consider Matryoshka truncation and fine-tuning earlier. Wrap `MultiVectorMatryoshkaLoss` with `MultiVectorTokenPoolingLoss` to train for both smaller dimensions and fewer vectors, reusing encoder embeddings. Just be sure to evaluate the final combination with your search engine and corpus.
 
 ## References
 

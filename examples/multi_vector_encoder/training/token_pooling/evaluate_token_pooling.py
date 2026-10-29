@@ -30,6 +30,11 @@ def main():
         "max_tokens_16": HierarchicalTokenPooling(max_tokens=16),
         "max_tokens_8": HierarchicalTokenPooling(max_tokens=8),
         "max_tokens_4": HierarchicalTokenPooling(max_tokens=4),
+        "pool_factor_2": HierarchicalTokenPooling(pool_factor=2),
+        "pool_factor_3": HierarchicalTokenPooling(pool_factor=3),
+        "pool_factor_4": HierarchicalTokenPooling(pool_factor=4),
+        "pool_factor_5": HierarchicalTokenPooling(pool_factor=5),
+        "pool_factor_6": HierarchicalTokenPooling(pool_factor=6),
     }
 
     scores = {}

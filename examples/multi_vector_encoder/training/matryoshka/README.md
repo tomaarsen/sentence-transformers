@@ -4,18 +4,22 @@ In a multi-vector retrieval index, reducing each token embedding from 128 to 32 
 
 Truncation keeps one embedding per token (unlike [token pooling](../token_pooling/README.md)) while reducing the dimensionality of every query and document vector. The encoder still runs its full backbone, with the smaller representations reducing embedding storage and the dimension of the dot products used in MaxSim scoring.
 
-## Training useful embedding prefixes
+In my experience, token pooling preserves retrieval quality better at a similar reduction in vector storage, so try it before dimensionality reduction. If your token embeddings have much more than 128 dimensions, Matryoshka truncation may be a useful starting point though.
 
-Ordinary retrieval training optimizes the full embedding, allowing useful information to spread across all of its dimensions. Simply discarding the last dimensions can therefore remove information needed to distinguish relevant documents from negatives. `MultiVectorMatryoshkaLoss` addresses this by evaluating the retrieval loss at several embedding widths during training, truncating and normalizing each query and document token vector before computing MaxSim scores.
+## Training
+
+Ordinary retrieval training optimizes the full embedding, allowing useful information to spread across all of its dimensions. Simply discarding the last dimensions can therefore remove information needed to distinguish relevant documents from negatives. [`MultiVectorMatryoshkaLoss`](../../../../docs/package_reference/multi_vector_encoder/losses.html#multivectormatryoshkaloss) addresses this by evaluating the retrieval loss at several embedding widths during training, truncating and normalizing each query and document token vector before computing MaxSim scores.
 
 In [training_cached_contrastive.py](training_cached_contrastive.py), the same batch contributes losses at 128, 64, and 32 dimensions, so the encoder learns to support all three widths jointly:
 
 ```python
+from sentence_transformers import MultiVectorEncoder
 from sentence_transformers.multi_vector_encoder.losses import (
     CachedMultiVectorMultipleNegativesRankingLoss,
     MultiVectorMatryoshkaLoss,
 )
 
+model = MultiVectorEncoder("answerdotai/ModernBERT-base")
 loss = CachedMultiVectorMultipleNegativesRankingLoss(model, mini_batch_size=8)
 loss = MultiVectorMatryoshkaLoss(
     model,
@@ -40,7 +44,7 @@ python -m examples.multi_vector_encoder.training.matryoshka.training_cached_cont
 
 Both commands use the same initialization, data, and optimization settings, with `--baseline` changing only the loss. Small MS MARCO NanoBEIR evaluations track full and 32-dimensional retrieval alongside held-out validation loss, helping you check whether the shorter prefix is learning to retrieve. You can adapt the model, dimensions, and training settings directly in the script, keeping both runs matched when comparing losses. It saves the encoder under `models/<run_name>/final` and attempts a Hub upload using your `hf auth login` credentials.
 
-## Applying Matryoshka-style truncation
+## Applying Matryoshka-Style Truncation
 
 Choose the embedding width when encoding queries and documents, using the example model from the Hub or the path to your own saved encoder:
 
@@ -67,7 +71,7 @@ Passing `truncate_dim=32` to `encode`, `encode_query`, or `encode_document` keep
 
 You can also initialize `MultiVectorEncoder` with `truncate_dim=32` to use that width by default. An explicit `truncate_dim` on an encode call overrides the model default, and saving the model preserves the default for subsequent loads.
 
-## Measuring the quality and storage tradeoff
+## Evaluation Results
 
 [evaluate_matryoshka.py](evaluate_matryoshka.py) compares full embeddings with 96, 64, 32, and 16 dimensions on all 13 NanoBEIR datasets. Running it on any multi-vector embedding model shows how much quality is retained at the width you intend to deploy, and you can edit the dimensions and evaluation settings to suit your model and use case. For example, you can compare the Matryoshka model with its baseline:
 
@@ -78,7 +82,7 @@ python -m examples.multi_vector_encoder.training.matryoshka.evaluate_matryoshka 
 
 The comparison below uses matched training on 30,000 MS MARCO triplets with seed 42 and the final checkpoints. Scores are mean nDCG@10 (%) across the 13 NanoBEIR datasets, with storage measured at unchanged numeric precision and excluding other index structures.
 
-| Dimensions | Vector storage | Ordinary loss | Matryoshka loss | Gain (points) |
+| Dimensions | Vector storage | Ordinary model | Matryoshka model | Gain (points) |
 | --- | --- | --- | --- | --- |
 | 128 | 100.0% | 48.45 | 48.95 | +0.50 |
 | 96 | 75.0% | 47.00 | 47.69 | +0.68 |
@@ -88,20 +92,24 @@ The comparison below uses matched training on 30,000 MS MARCO triplets with seed
 
 ![Quality versus embedding storage](results.png)
 
-At 32 dimensions, Matryoshka improves retrieval from 37.38 to 43.44 while keeping full-width quality similar, showing why training the shorter prefixes matters. Training covered 128, 64, and 32 dimensions, while the evaluations at 16 and 96 dimensions show how well the model generalizes to widths it was not explicitly trained for.
+At 32 dimensions, Matryoshka improves retrieval from 37.38 to 43.44 while using one quarter of the vector storage. This retains 88.7% of the model's full-width nDCG@10, compared with 77.2% for the baseline, with each retention measured against that model's own full-width score. Training covered 128, 64, and 32 dimensions, while the evaluations at 16 and 96 dimensions show how well the model generalizes to widths it was not explicitly trained for.
 
-## Choosing how to reduce index memory
+## Combining Compression Techniques
 
-Embedding storage depends on the number of document vectors, their dimensionality, and the precision of each coordinate. When memory is the main constraint, index-level quantization can be a less lossy starting point than aggressive dimension truncation. [Fast-PLAID](https://github.com/lightonai/fast-plaid) supports 2 or 4 bits per residual coordinate while retaining the full embedding width, and [ColBERTv2's compression experiments](https://arxiv.org/html/2112.01488v3) demonstrate how well 2-bit residual compression can preserve retrieval quality.
+For smaller indexes, consider these options in this order:
 
-[Token pooling](../token_pooling/README.md) is another promising option because it reduces how many document vectors must be stored and compared during MaxSim scoring. Quantization, dimension truncation, and token pooling act on different parts of the storage cost and can be combined, so evaluate their quality and memory tradeoffs with the search index you intend to deploy.
+1. Quantization to 4, 2, or 1 bit, for example via [Fast-PLAID](https://github.com/lightonai/fast-plaid).
+2. [Token pooling](../token_pooling/README.md) to reduce the number of document vectors, optionally with pooling-aware fine-tuning.
+3. Matryoshka truncation, optionally with fine-tuning, to reduce each vector's dimensionality.
+
+For models with much more than 128 dimensions, consider Matryoshka truncation and fine-tuning earlier. Wrap `MultiVectorMatryoshkaLoss` with `MultiVectorTokenPoolingLoss` to train for both smaller dimensions and fewer vectors, reusing encoder embeddings. Evaluate the final combination with your search engine and corpus.
 
 ## References
 
 - [Matryoshka Representation Learning](https://huggingface.co/papers/2205.13147)
 - [MultiVectorMatryoshkaLoss API](../../../../docs/package_reference/multi_vector_encoder/losses.html#multivectormatryoshkaloss)
 
-## See also
+## See Also
 
 - [Token Pooling](../token_pooling/README.md)
 - [Dense Matryoshka Embeddings](../../../sentence_transformer/training/matryoshka/README.md)
