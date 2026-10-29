@@ -8,10 +8,10 @@ from .multiple_negatives_ranking import MultiVectorMultipleNegativesRankingLoss
 from .token_pooling import MultiVectorTokenPoolingLoss
 
 __all__ = [
-    "MultiVectorMultipleNegativesRankingLoss",
-    "CachedMultiVectorMultipleNegativesRankingLoss",
     "MultiVectorDistillKLDivLoss",
     "MultiVectorMarginMSELoss",
     "MultiVectorMatryoshkaLoss",
+    "MultiVectorMultipleNegativesRankingLoss",
+    "CachedMultiVectorMultipleNegativesRankingLoss",
     "MultiVectorTokenPoolingLoss",
 ]

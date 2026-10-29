@@ -62,13 +62,13 @@ document datasets on the fly.
 
 ## Loss modifiers
 
-Loss modifiers wrap another loss to train for index compression. `MultiVectorMatryoshkaLoss` trains for fewer embedding dimensions, and `MultiVectorTokenPoolingLoss` trains for fewer document tokens. The two can be stacked.
+These loss functions can be seen as *loss modifiers*: they work on top of standard retrieval losses, applying them in different ways to instil useful properties into the trained embedding model. For index compression, you can use `MultiVectorTokenPoolingLoss` to train for fewer document vectors, `MultiVectorMatryoshkaLoss` to train for reduced embedding dimensionality, or stack them to train for both.
 
 | Inputs | Labels | Appropriate Loss Functions                                                                                                                                                                                                                                                                                 |
 |--------|--------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `any`  | `any`  | <a href="../package_reference/multi_vector_encoder/losses.html#multivectormatryoshkaloss">`MultiVectorMatryoshkaLoss`</a><br><a href="../package_reference/multi_vector_encoder/losses.html#multivectortokenpoolingloss">`MultiVectorTokenPoolingLoss`</a> |
+| `any`  | `any`  | <a href="../package_reference/multi_vector_encoder/losses.html#multivectortokenpoolingloss">`MultiVectorTokenPoolingLoss`</a><br><a href="../package_reference/multi_vector_encoder/losses.html#multivectormatryoshkaloss">`MultiVectorMatryoshkaLoss`</a> |
 
-See the [Matryoshka](../../examples/multi_vector_encoder/training/matryoshka/README.md) and [token pooling](../../examples/multi_vector_encoder/training/token_pooling/README.md) examples for training comparisons, measured results, and inference.
+See the [token pooling](../../examples/multi_vector_encoder/training/token_pooling/README.md) and [Matryoshka](../../examples/multi_vector_encoder/training/matryoshka/README.md) examples for training comparisons, measured results, and inference.
 
 ## Commonly used Loss Functions
 

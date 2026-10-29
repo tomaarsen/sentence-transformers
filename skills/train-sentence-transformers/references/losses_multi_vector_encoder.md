@@ -86,20 +86,7 @@ loss = MultiVectorDistillKLDivLoss(model=model)
 
 ## Loss modifiers
 
-Both modifiers sum a wrapped loss over compression variants. They support cached losses and can be stacked by wrapping `MultiVectorMatryoshkaLoss` with `MultiVectorTokenPoolingLoss` to match the encoding order.
-
-### `MultiVectorMatryoshkaLoss`
-
-Train for truncated, normalized token embeddings:
-
-```python
-from sentence_transformers.multi_vector_encoder.losses import MultiVectorMatryoshkaLoss
-
-loss = CachedMultiVectorMultipleNegativesRankingLoss(model=model, mini_batch_size=8)
-loss = MultiVectorMatryoshkaLoss(model, loss, matryoshka_dims=[128, 96, 64, 32])
-```
-
-Include the full dimension to retain uncompressed training. Use `matryoshka_weights` for weighting and `n_dims_per_step` to sample dimensions.
+Both modifiers sum a wrapped loss over compression variants. They support cached losses and can be stacked with `MultiVectorTokenPoolingLoss` wrapping `MultiVectorMatryoshkaLoss` to match the encoding order.
 
 ### `MultiVectorTokenPoolingLoss`
 
@@ -115,6 +102,19 @@ loss = MultiVectorTokenPoolingLoss(model, loss, token_poolings=token_poolings)
 ```
 
 Configure factors, token budgets, or distance thresholds on the pooling modules. Include an unpooled variant when desired. Queries stay unpooled by default. Wrap a model without a pooling module in its pipeline, and use `n_poolings_per_step` to sample variants if needed.
+
+### `MultiVectorMatryoshkaLoss`
+
+Train for truncated, normalized token embeddings:
+
+```python
+from sentence_transformers.multi_vector_encoder.losses import MultiVectorMatryoshkaLoss
+
+loss = CachedMultiVectorMultipleNegativesRankingLoss(model=model, mini_batch_size=8)
+loss = MultiVectorMatryoshkaLoss(model, loss, matryoshka_dims=[128, 96, 64, 32])
+```
+
+Include the full dimension to retain uncompressed training. Use `matryoshka_weights` for weighting and `n_dims_per_step` to sample dimensions.
 
 ## Data-shape gotchas
 
