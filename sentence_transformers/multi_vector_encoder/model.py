@@ -105,10 +105,8 @@ class MultiVectorEncoder(BaseModel):
         similarity_fn_name (str or SimilarityFunction, optional): The name of the similarity function, either
             ``"maxsim"`` or ``"meanmaxsim"`` (MaxSim divided by the query's token count). Defaults to
             ``"maxsim"``.
-        token_pooling (BaseTokenPooling, optional): Default pooling for the encode methods, applied
-            after the forward pipeline and before truncation. A per-call pooler overrides this
-            default. If a call passes None, this default is used. This runtime default is not
-            saved with the model. Defaults to None.
+        token_pooling (BaseTokenPooling, optional): Default pooling for encoding, applied before truncation.
+            A per-call pooler overrides this default, which is not saved with the model. Defaults to None.
         truncate_dim (int, optional): Default token embedding dimension for the encode methods. Truncated
             vectors are L2-normalized, and a per-call value overrides this default. If None, uses the
             saved setting or the model's full embedding dimension.
@@ -797,9 +795,8 @@ class MultiVectorEncoder(BaseModel):
                 embeddings, sliced by the scoring mask. ``None`` returns the raw per-input module
                 output dicts instead: every feature key (``token_embeddings``, ``attention_mask``,
                 and any extra keys custom modules wrote), unsliced and padded to each batch's
-                longest input. With ``None``, normalization and the ``convert_to_*`` options do not
-                apply. The default or per-call ``token_pooling`` does apply: it
-                rewrites ``token_embeddings`` and ``attention_mask`` in the dicts.
+                longest input. With ``None``, pooling and truncation still apply, but
+                ``normalize_embeddings`` and conversion options do not.
             convert_to_numpy (bool, optional): If True, returns a list of :class:`numpy.ndarray` and moves
                 each batch to the CPU as it is encoded. Defaults to False, so embeddings stay on
                 ``device``: scoring them with :meth:`similarity` then needs no transfer, which is worth
@@ -809,19 +806,13 @@ class MultiVectorEncoder(BaseModel):
             device (str, torch.device, list, or None): Device(s) for computation. A single device moves the
                 model there unless a `device_map` or Accelerate hooks control placement, a list uses multi-process encoding, and
                 None uses the model's current device. Defaults to None.
-            normalize_embeddings (bool, optional): If True, L2-normalize each per-token embedding after
-                the pipeline and before per-call token pooling. Use this when the loaded pipeline does
-                not include a :class:`Normalize` module but you still want unit-norm vectors. Defaults to False.
-            token_pooling (BaseTokenPooling, optional): Per-call token pooling applied after the pipeline
-                to embeddings whose ``task`` is in the pooling's ``tasks`` (by default only
-                documents). If the model already bakes a pooling into its pipeline, this
-                compounds on top of it (pooling further). A one-time note is logged so the case is
-                discoverable. With ``output_value=None``, applied to the raw dicts
-                (``token_embeddings`` and ``attention_mask`` are rewritten). If None, uses the
+            normalize_embeddings (bool, optional): Whether to L2-normalize token embeddings before pooling.
+                Defaults to False.
+            token_pooling (BaseTokenPooling, optional): Pooling applied after the forward pipeline, to
+                inputs selected by the pooler's ``tasks`` (documents by default). If None, uses the
                 model's default pooler.
-            truncate_dim (int, optional): Truncate and L2-normalize token embeddings after per-call
-                pooling, including with ``output_value=None``. If None, uses the model's default
-                ``truncate_dim``.
+            truncate_dim (int, optional): Truncate and L2-normalize token embeddings after pooling.
+                If None, uses the model's default dimension.
             pool (dict, optional): A multi-process pool created via :meth:`start_multi_process_pool`.
             chunk_size (int, optional): Chunk size for multi-process encoding.
             task (str, optional): One of ``"query"``, ``"document"``. Sets the prefix / length /
