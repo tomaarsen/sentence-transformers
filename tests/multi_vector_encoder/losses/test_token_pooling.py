@@ -25,7 +25,7 @@ class _PassthroughModel(nn.Module):
         self.forward_calls += 1
         return features
 
-    def get_embedding_dimension(self) -> int:
+    def _get_untruncated_embedding_dimension(self) -> int:
         return DIM
 
 

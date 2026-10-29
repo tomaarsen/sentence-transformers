@@ -77,8 +77,12 @@ def test_weights_length_mismatch_raises_error(static_retrieval_mrl_en_v1_model, 
         )
 
 
-def test_dimension_exceeds_model_dimension_raises_error(static_retrieval_mrl_en_v1_model, mock_loss):
+@pytest.mark.parametrize("truncate_dim", [None, 256])
+def test_dimension_exceeds_model_dimension_raises_error(
+    static_retrieval_mrl_en_v1_model, mock_loss, truncate_dim: int | None
+):
     """Test that dimension exceeding model's embedding dimension raises ValueError."""
+    static_retrieval_mrl_en_v1_model.truncate_dim = truncate_dim
     expected_msg = "Dimensions in matryoshka_dims cannot exceed the model's embedding dimension of 1024."
     with pytest.raises(ValueError, match=expected_msg):
         MatryoshkaLoss(
@@ -88,8 +92,12 @@ def test_dimension_exceeds_model_dimension_raises_error(static_retrieval_mrl_en_
         )
 
 
-def test_model_dimension_not_in_dims_warns(static_retrieval_mrl_en_v1_model, mock_loss, caplog):
+@pytest.mark.parametrize("truncate_dim", [None, 256])
+def test_model_dimension_not_in_dims_warns(
+    static_retrieval_mrl_en_v1_model, mock_loss, caplog, truncate_dim: int | None
+):
     """Test that model dimension not in matryoshka_dims produces warning."""
+    static_retrieval_mrl_en_v1_model.truncate_dim = truncate_dim
     with caplog.at_level("WARNING"):
         MatryoshkaLoss(
             model=static_retrieval_mrl_en_v1_model,
@@ -113,7 +121,7 @@ def test_model_dimension_none_no_validation(mock_loss):
     """Test that when model dimension is None, no validation or warning occurs."""
 
     class _MockModel:
-        def get_embedding_dimension(self):
+        def _get_untruncated_embedding_dimension(self):
             return None
 
     model = _MockModel()
@@ -214,7 +222,11 @@ def test_mse_loss_matryoshka_per_column_teacher(stsb_bert_tiny_model):
 
 
 @pytest.mark.parametrize("architecture", ["concatenated_pooling", "dense_projection"])
-def test_matryoshka_dims_can_exceed_token_embedding_dimension(architecture: str) -> None:
+@pytest.mark.parametrize("truncate_dim", [None, 2])
+@pytest.mark.parametrize("loss_cls", [MultipleNegativesRankingLoss, CachedMultipleNegativesRankingLoss])
+def test_matryoshka_dims_can_exceed_token_embedding_dimension(
+    architecture: str, truncate_dim: int | None, loss_cls
+) -> None:
     word_embeddings = WordEmbeddings(
         WhitespaceTokenizer(vocab=["PAD", "red", "blue", "green"]),
         embedding_weights=torch.tensor([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]]),
@@ -224,11 +236,15 @@ def test_matryoshka_dims_can_exceed_token_embedding_dimension(architecture: str)
         modules = [word_embeddings, Pooling(2, ("mean", "max"))]
     else:
         modules = [word_embeddings, Pooling(2, "mean"), Dense(2, 4)]
-    model = SentenceTransformer(modules=modules, device="cpu")
-    assert model.get_embedding_dimension() == 4
+    model = SentenceTransformer(modules=modules, device="cpu", truncate_dim=truncate_dim)
+    assert model.get_embedding_dimension() == (truncate_dim or 4)
 
     anchors, positives = ["red", "blue"], ["green", "red blue"]
-    loss_fn = MatryoshkaLoss(model, MultipleNegativesRankingLoss(model), matryoshka_dims=[4, 2])
+    kwargs = (
+        {"mini_batch_size": 1, "show_progress_bar": False} if loss_cls is CachedMultipleNegativesRankingLoss else {}
+    )
+    loss_fn = MatryoshkaLoss(model, loss_cls(model, **kwargs), matryoshka_dims=[4, 2])
+    assert model.truncate_dim == truncate_dim
     loss = loss_fn([model.preprocess(anchors), model.preprocess(positives)], None)
 
     anchor_embeddings = model(model.preprocess(anchors))["sentence_embedding"]

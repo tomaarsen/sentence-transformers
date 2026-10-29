@@ -19,6 +19,7 @@ def main():
     cli = parser.parse_args()
 
     model = MultiVectorEncoder(cli.model_name, model_kwargs={"torch_dtype": "float32"})
+    model.truncate_dim = None
     model_path = Path(cli.model_name)
     model_name = model_path.parent.name if model_path.name == "final" else model_path.name
     output_dir = Path("models") / model_name / "eval-matryoshka"

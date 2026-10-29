@@ -1152,6 +1152,14 @@ class SentenceTransformer(BaseModel, FitMixin):
         Returns:
             Optional[int]: The number of dimensions in the output of `encode`. If it's not known, it's `None`.
         """
+        output_dim = self._get_untruncated_embedding_dimension()
+        if self.truncate_dim is not None:
+            if output_dim is None:
+                return self.truncate_dim
+            return min(output_dim, self.truncate_dim)
+        return output_dim
+
+    def _get_untruncated_embedding_dimension(self) -> int | None:
         output_dim = None
         for module in reversed(self._modules.values()):
             for name in (
@@ -1164,12 +1172,8 @@ class SentenceTransformer(BaseModel, FitMixin):
                     output_dim = method()
                     break
             if output_dim is not None:
-                break
-        if self.truncate_dim is not None:
-            if output_dim is None:
-                return self.truncate_dim
-            return min(output_dim, self.truncate_dim)
-        return output_dim
+                return output_dim
+        return None
 
     @deprecated(
         "The `get_sentence_embedding_dimension` method has been renamed to `get_embedding_dimension`.",

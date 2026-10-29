@@ -194,7 +194,7 @@ class MatryoshkaLoss(nn.Module):
         elif len(matryoshka_weights) != len(matryoshka_dims):
             raise ValueError("matryoshka_weights must be the same length as matryoshka_dims.")
 
-        model_embedding_dim = model.get_embedding_dimension()
+        model_embedding_dim = model._get_untruncated_embedding_dimension()
         if model_embedding_dim is not None:
             if any(d > model_embedding_dim for d in matryoshka_dims):
                 raise ValueError(

@@ -1636,15 +1636,17 @@ class MultiVectorEncoder(BaseModel):
 
     def get_embedding_dimension(self) -> int | None:
         """The dimensionality of each token vector returned by :meth:`encode`."""
-        embedding_dim = None
-        for module in reversed(self._modules.values()):
-            method = getattr(module, "get_embedding_dimension", None)
-            if callable(method):
-                embedding_dim = method()
-                break
+        embedding_dim = self._get_untruncated_embedding_dimension()
         if self.truncate_dim is not None:
             return self.truncate_dim if embedding_dim is None else min(embedding_dim, self.truncate_dim)
         return embedding_dim
+
+    def _get_untruncated_embedding_dimension(self) -> int | None:
+        for module in reversed(self._modules.values()):
+            method = getattr(module, "get_embedding_dimension", None)
+            if callable(method):
+                return method()
+        return None
 
     def _push_to_hub_usage_tip(self, repo_id: str) -> str:
         class_name = self.__class__.__name__

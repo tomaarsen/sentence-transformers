@@ -20,7 +20,7 @@ class _PassthroughModel(nn.Module):
         self.forward_calls += 1
         return features
 
-    def get_embedding_dimension(self) -> int:
+    def _get_untruncated_embedding_dimension(self) -> int:
         return DIM
 
 
@@ -193,8 +193,12 @@ def test_dims_and_weights_sorted_descending() -> None:
     }
 
 
-def test_matryoshka_on_a_real_model(mve_bert_tiny_model) -> None:
+@pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
+@pytest.mark.parametrize("truncate_dim", [None, 32])
+def test_matryoshka_on_a_real_model(mve_bert_tiny_model, build_inner, truncate_dim: int | None) -> None:
     model = mve_bert_tiny_model.train()
+    dim = model.get_embedding_dimension()
+    model.truncate_dim = truncate_dim
     features = [
         batch_to_device(model.preprocess(texts, task=task), model.device)
         for texts, task in [
@@ -205,11 +209,23 @@ def test_matryoshka_on_a_real_model(mve_bert_tiny_model) -> None:
             ),
         ]
     ]
-    dim = model.get_embedding_dimension()
-    loss = mve_losses.MultiVectorMatryoshkaLoss(model, _mnrl(model), matryoshka_dims=[dim, dim // 2])
+    loss = mve_losses.MultiVectorMatryoshkaLoss(model, build_inner(model), matryoshka_dims=[dim, dim // 2])
+    assert model.truncate_dim == truncate_dim
     value = loss(features, None)
     assert torch.isfinite(value)
     value.backward()
     grads = [parameter.grad for parameter in model[0].parameters() if parameter.grad is not None]
     assert grads and any(grad.abs().sum() > 0 for grad in grads)
     assert model.forward.__self__ is model
+
+
+def test_validation_uses_untruncated_dimension(mve_bert_tiny_model, caplog) -> None:
+    model = mve_bert_tiny_model
+    dim = model.get_embedding_dimension()
+    model.truncate_dim = dim // 2
+    with pytest.raises(ValueError, match=f"cannot exceed the model's embedding dimension of {dim}"):
+        mve_losses.MultiVectorMatryoshkaLoss(model, _mnrl(model), matryoshka_dims=[dim + 1, dim // 2])
+    with caplog.at_level("WARNING"):
+        mve_losses.MultiVectorMatryoshkaLoss(model, _mnrl(model), matryoshka_dims=[dim // 2])
+    assert f"dimension {dim} is not included" in caplog.text
+    assert model.truncate_dim == dim // 2
