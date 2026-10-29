@@ -97,7 +97,7 @@ from sentence_transformers.multi_vector_encoder.losses import MultiVectorTokenPo
 from sentence_transformers.multi_vector_encoder.modules import HierarchicalTokenPooling
 
 loss = CachedMultiVectorMultipleNegativesRankingLoss(model=model, mini_batch_size=8)
-token_poolings = [None, HierarchicalTokenPooling(max_tokens=16)]
+token_poolings = [None, HierarchicalTokenPooling(pool_factor=4)]
 loss = MultiVectorTokenPoolingLoss(model, loss, token_poolings=token_poolings)
 ```
 
