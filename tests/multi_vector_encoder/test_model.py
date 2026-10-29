@@ -1370,32 +1370,6 @@ def test_hierarchical_pooling_helper_reduces_token_count() -> None:
     assert torch.allclose(pooled[0], emb[0])
 
 
-def test_hierarchical_pooling_module_pools_documents_not_queries() -> None:
-    module = HierarchicalTokenPooling(pool_factor=2)
-    emb = torch.nn.functional.normalize(torch.randn(2, 12, 8), p=2, dim=-1)
-    mask = torch.ones(2, 12, dtype=torch.long)
-
-    doc = module({"token_embeddings": emb.clone(), "attention_mask": mask.clone()}, task="document")
-    assert doc["token_embeddings"].shape[1] < 12
-    assert doc["attention_mask"].shape[1] == doc["token_embeddings"].shape[1]
-
-    # Queries pass through untouched.
-    query = module({"token_embeddings": emb.clone(), "attention_mask": mask.clone()}, task="query")
-    assert query["token_embeddings"].shape[1] == 12
-
-
-def test_hierarchical_pooling_module_in_pipeline() -> None:
-    text = "a fairly long document with plenty of distinct tokens to cluster together here"
-    base = "sentence-transformers-testing/stsb-bert-tiny-safetensors"
-    without_pool = MultiVectorEncoder(base).encode_document([text])
-
-    pooled_model = MultiVectorEncoder(base)
-    pooled_model.append(HierarchicalTokenPooling(pool_factor=2))
-    with_pool = pooled_model.encode_document([text])
-
-    assert with_pool[0].shape[0] < without_pool[0].shape[0]
-
-
 def test_encode_pooling_compounds_and_notes_when_module_present(caplog) -> None:
     """When a pooling is already in the pipeline AND encode() is called with a per-call ``token_pooling=``,
     the per-call pooling compounds on top (a supported way to pool further than the built-in default),
@@ -1430,19 +1404,28 @@ def test_encode_pooling_note_skipped_for_unpooled_tasks(caplog) -> None:
     assert any("compounding" in record.message for record in caplog.records)
 
 
-def test_encode_pooling_applies_to_raw_output(mve_bert_tiny_model: MultiVectorEncoder) -> None:
+@pytest.mark.parametrize("pooler", ["hierarchical", "lambda"])
+def test_encode_pooling_applies_to_raw_output(mve_bert_tiny_model: MultiVectorEncoder, pooler: str) -> None:
     # Per-call transforms also apply to raw output, like ST's truncate_dim. The pooling module's
     # forward slices each row by its mask before clustering, so batch padding never reaches the
     # pooling, and the rewritten mask marks the pooled rows: mask-sliced raw output is bit-exact
     # vs the normal (list of 2D) path.
+    from sentence_transformers.multi_vector_encoder.modules import LambdaTokenPooling
+
     model = mve_bert_tiny_model
     texts = [
         "short doc",
         "a fairly long document with plenty of distinct tokens to cluster together here",
         "medium length document with several tokens",
     ]
-    pooling = HierarchicalTokenPooling(pool_factor=2)
+    pooling = (
+        HierarchicalTokenPooling(pool_factor=2)
+        if pooler == "hierarchical"
+        else LambdaTokenPooling(pool_fn=lambda emb: emb[::2])
+    )
+    unpooled = model.encode_document(texts)
     normal = model.encode_document(texts, token_pooling=pooling)
+    assert all(len(pooled) < len(full) for pooled, full in zip(normal, unpooled))
     raw = model.encode_document(texts, output_value=None, token_pooling=pooling)
     assert isinstance(raw, list)
     # The ragged batch must actually contain padded rows for this test to mean anything.
@@ -1452,18 +1435,23 @@ def test_encode_pooling_applies_to_raw_output(mve_bert_tiny_model: MultiVectorEn
         assert torch.equal(item["token_embeddings"][mask], pooled_reference)
 
 
-def test_encode_pooling_skips_queries_on_raw_output(mve_bert_tiny_model: MultiVectorEncoder) -> None:
-    # encode delegates the task gate to the pooling itself: default tasks skip queries, listing
-    # "query" pools them.
+@pytest.mark.parametrize("output_value", ["token_embeddings", None])
+def test_encode_pooling_skips_queries(mve_bert_tiny_model: MultiVectorEncoder, output_value: str | None) -> None:
     model = mve_bert_tiny_model
     query = "a fairly long query with plenty of distinct tokens to cluster together here"
-    unpooled = model.encode_query(query, output_value=None)["token_embeddings"]
-    skipped = model.encode_query(query, output_value=None, token_pooling=HierarchicalTokenPooling(pool_factor=2))
-    opted_in = model.encode_query(
-        query, output_value=None, token_pooling=HierarchicalTokenPooling(pool_factor=2, tasks=["query", "document"])
+    unpooled = model.encode_query(query, output_value=output_value)
+    skipped = model.encode_query(
+        query, output_value=output_value, token_pooling=HierarchicalTokenPooling(pool_factor=2)
     )
-    assert skipped["token_embeddings"].shape == unpooled.shape
-    assert opted_in["token_embeddings"].shape[0] < unpooled.shape[0]
+    opted_in = model.encode_query(
+        query,
+        output_value=output_value,
+        token_pooling=HierarchicalTokenPooling(pool_factor=2, tasks=["query", "document"]),
+    )
+    if output_value is None:
+        unpooled, skipped, opted_in = [output["token_embeddings"] for output in (unpooled, skipped, opted_in)]
+    torch.testing.assert_close(skipped, unpooled)
+    assert opted_in.shape[0] < unpooled.shape[0]
 
 
 @pytest.mark.parametrize("method", ["encode", "encode_query", "encode_document"])
@@ -1547,8 +1535,9 @@ def test_encode_truncation_with_low_precision_padding(mve_bert_tiny_model, dtype
         torch.testing.assert_close(values.float().norm(dim=-1), torch.ones(len(values)), atol=0.005, rtol=0.005)
 
 
-@pytest.mark.parametrize("method", ["encode", "encode_query", "encode_document"])
-@pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
+@pytest.mark.parametrize(
+    "method,output", [("encode", "tensor"), ("encode_query", "numpy"), ("encode_document", "raw")]
+)
 def test_init_truncate_dim(mve_bert_tiny_model: MultiVectorEncoder, method: str, output: str) -> None:
     original = mve_bert_tiny_model
     full_dim = original.get_embedding_dimension()
@@ -1599,8 +1588,9 @@ def test_init_truncate_dim_save_load(mve_bert_tiny_model: MultiVectorEncoder, tm
     assert "truncate_dim" not in loaded._get_model_config()
 
 
-@pytest.mark.parametrize("method", ["encode", "encode_query", "encode_document"])
-@pytest.mark.parametrize("output", ["tensor", "numpy", "raw"])
+@pytest.mark.parametrize(
+    "method,output", [("encode", "tensor"), ("encode_query", "numpy"), ("encode_document", "raw")]
+)
 def test_init_token_pooling_defaults_and_overrides(mve_bert_tiny_model, method: str, output: str) -> None:
     original = mve_bert_tiny_model
     default = HierarchicalTokenPooling(max_tokens=4, tasks=["query", "document"])

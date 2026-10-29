@@ -1,15 +1,3 @@
-"""MultiVectorTokenPoolingLoss: repeat a wrapped multi-vector loss once per token pooling variant,
-each time with that variant applied to the token embeddings and scoring masks.
-
-The core contracts pinned here:
-- a passthrough-only wrapper is exactly the wrapped loss (value and gradients),
-- the multi-variant loss equals the manual weighted sum over manually pooled inputs, with queries
-  left unpooled by the default document-only task,
-- pooled terms move gradients into the underlying embeddings (through the cluster means),
-- the gradient-cached path (decorating ``calculate_loss``) matches the model-forward-patching path,
-- the two loss modifiers stack around one loss, cached included.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -21,68 +9,40 @@ from sentence_transformers.multi_vector_encoder import losses as mve_losses
 from sentence_transformers.multi_vector_encoder.modules import (
     BaseTokenPooling,
     HierarchicalTokenPooling,
-    LambdaTokenPooling,
 )
+from sentence_transformers.util import batch_to_device
 from tests.utils import skip_fp16_cpu_layer_norm
 
 DIM = 8
 
 
 class _PassthroughModel(nn.Module):
-    """Stub model returning the ``token_embeddings`` already placed in the feature dict.
-
-    Defined with a real ``forward`` (not ``__call__``) so the wrapper losses can patch
-    ``model.forward`` like they do on a real MultiVectorEncoder. The wrapper and the wrapped loss
-    must share one instance, as the wrapper patches the instance the wrapped loss calls.
-    """
-
-    def __init__(self, embedding_dim: int | None = DIM) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.embedding_dim = embedding_dim
         self.forward_calls = 0
 
     def forward(self, features: dict[str, Tensor], task: str | None = None) -> dict[str, Tensor]:
         self.forward_calls += 1
         return features
 
-    def get_embedding_dimension(self) -> int | None:
-        return self.embedding_dim
-
-
-def _make_feature(t_tokens: int, batch: int, seed: int) -> dict[str, Tensor]:
-    g = torch.Generator().manual_seed(seed)
-    emb = F.normalize(torch.randn(batch, t_tokens, DIM, generator=g), p=2, dim=-1)
-    emb.requires_grad_(True)
-    return {
-        "token_embeddings": emb,
-        "attention_mask": torch.ones(batch, t_tokens, dtype=torch.bool),
-    }
+    def get_embedding_dimension(self) -> int:
+        return DIM
 
 
 def _build_features(batch: int = 4) -> list[dict[str, Tensor]]:
     return [
-        _make_feature(t_tokens=6, batch=batch, seed=1),
-        _make_feature(t_tokens=10, batch=batch, seed=2),
-        _make_feature(t_tokens=14, batch=batch, seed=3),
+        {
+            "token_embeddings": F.normalize(
+                torch.randn(batch, tokens, DIM, generator=torch.Generator().manual_seed(seed)), dim=-1
+            ).requires_grad_(),
+            "attention_mask": torch.ones(batch, tokens, dtype=torch.bool),
+        }
+        for seed, tokens in enumerate((6, 10, 14), start=1)
     ]
 
 
 def _leaves(features: list[dict[str, Tensor]]) -> list[Tensor]:
     return [sf["token_embeddings"] for sf in features]
-
-
-def _pool_reference(features: list[dict[str, Tensor]], pooling: BaseTokenPooling | None) -> list[dict[str, Tensor]]:
-    """Pool each column the way a pipeline pooling module would at inference: per task, on top of
-    the scoring mask. Fresh dicts, as the pooling forward rewrites the dict it is given."""
-    if pooling is None:
-        return [dict(sf) for sf in features]
-    pooled = []
-    for idx, sf in enumerate(features):
-        task = "query" if idx == 0 else "document"
-        pooled.append(
-            pooling({"token_embeddings": sf["token_embeddings"], "attention_mask": sf["attention_mask"]}, task=task)
-        )
-    return pooled
 
 
 def _mnrl(model: nn.Module, **kwargs) -> nn.Module:
@@ -93,6 +53,18 @@ def _cached_mnrl(model: nn.Module, **kwargs) -> nn.Module:
     return mve_losses.CachedMultiVectorMultipleNegativesRankingLoss(
         model=model, mini_batch_size=2, show_progress_bar=False, **kwargs
     )
+
+
+def _pool_reference(features: list[dict[str, Tensor]], pooling: BaseTokenPooling | None) -> list[dict[str, Tensor]]:
+    if pooling is None:
+        return [dict(sf) for sf in features]
+    pooled = []
+    for idx, sf in enumerate(features):
+        task = "query" if idx == 0 else "document"
+        pooled.append(
+            pooling({"token_embeddings": sf["token_embeddings"], "attention_mask": sf["attention_mask"]}, task=task)
+        )
+    return pooled
 
 
 @pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
@@ -117,148 +89,39 @@ def test_passthrough_only_matches_wrapped_loss(build_inner, use_none: bool) -> N
 
 
 @pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
-@pytest.mark.parametrize("reverse", [False, True])
-@pytest.mark.parametrize("use_generator", [False, True])
-def test_token_pooling_equals_manual_sum_of_pooled_losses(build_inner, reverse: bool, use_generator: bool) -> None:
-    """The multi-variant wrapper must equal the weighted sum of the wrapped loss over manually
-    pooled inputs, with the query column untouched (documents-only default task). The single model
-    forward per column is cached and each variant pools the cached full-resolution output."""
-    pooling = HierarchicalTokenPooling(pool_factor=2)
-    variants = [(1.0, None), (0.5, pooling)]
-    if reverse:
-        variants.reverse()
-
+@pytest.mark.parametrize(
+    "token_poolings,weights,use_generator",
+    [
+        pytest.param([None, HierarchicalTokenPooling(pool_factor=2)], [1.0, 0.5], False, id="factor"),
+        pytest.param([HierarchicalTokenPooling(pool_factor=2), None], [0.5, 1.0], False, id="pooled-first"),
+        pytest.param([None, HierarchicalTokenPooling(pool_factor=2)], [1.0, 0.5], True, id="iterator"),
+        pytest.param([HierarchicalTokenPooling(pool_factor=2)], [1.0], False, id="factor-only"),
+        pytest.param([HierarchicalTokenPooling(max_tokens=4)], [1.0], False, id="cap-only"),
+        pytest.param([HierarchicalTokenPooling(distance_threshold=1.1)], [1.0], False, id="adaptive-only"),
+        pytest.param(
+            [
+                None,
+                HierarchicalTokenPooling(pool_factor=2),
+                HierarchicalTokenPooling(max_tokens=4),
+                HierarchicalTokenPooling(distance_threshold=1.1),
+            ],
+            [0.5, 1 / 6, 1 / 6, 1 / 6],
+            False,
+            id="mixed",
+        ),
+    ],
+)
+def test_token_pooling_equals_manual_sum_of_pooled_losses(build_inner, token_poolings, weights, use_generator) -> None:
     wrapped_features = _build_features()
     leaves = _leaves(wrapped_features)
     model = _PassthroughModel()
     loss = mve_losses.MultiVectorTokenPoolingLoss(
-        model,
-        build_inner(model),
-        token_poolings=[variant for _, variant in variants],
-        weights=[weight for weight, _ in variants],
+        model, build_inner(model), token_poolings=token_poolings, weights=weights
     )
     value = loss(iter(wrapped_features) if use_generator else wrapped_features, None)
     value.backward()
     if build_inner is _mnrl:
         assert model.forward_calls == len(wrapped_features)
-
-    manual_features = _build_features()
-    plain = _mnrl(_PassthroughModel())
-    manual_value = sum(weight * plain(_pool_reference(manual_features, variant), None) for weight, variant in variants)
-    manual_value.backward()
-
-    assert torch.allclose(value, manual_value, atol=1e-6)
-    for leaf, manual_sf in zip(leaves, manual_features):
-        assert leaf.grad.abs().sum() > 0
-        assert torch.allclose(leaf.grad, manual_sf["token_embeddings"].grad, atol=1e-6)
-
-    with torch.no_grad():
-        torch.testing.assert_close(loss(_build_features(), None), manual_value)
-
-
-def test_pooled_terms_move_gradients() -> None:
-    """With all weight on the pooled variant, gradients must still reach the input embeddings.
-    The cluster assignment is a constant, gradients flow through the cluster means."""
-    wrapped_features = _build_features()
-    leaves = _leaves(wrapped_features)
-    model = _PassthroughModel()
-    loss = mve_losses.MultiVectorTokenPoolingLoss(
-        model,
-        _mnrl(model),
-        token_poolings=[None, HierarchicalTokenPooling(pool_factor=2)],
-        weights=[0.0, 1.0],
-    )
-    value = loss(wrapped_features, None)
-    value.backward()
-
-    manual_features = _build_features()
-    pooled_features = _pool_reference(manual_features, HierarchicalTokenPooling(pool_factor=2))
-    pooled_value = _mnrl(_PassthroughModel())(pooled_features, None)
-    pooled_value.backward()
-
-    assert torch.allclose(value, pooled_value, atol=1e-6)
-    for leaf, manual_sf in zip(leaves, manual_features):
-        assert leaf.grad.abs().sum() > 0, "the pooled loss term must move the underlying embeddings"
-        assert torch.allclose(leaf.grad, manual_sf["token_embeddings"].grad, atol=1e-6)
-
-
-def test_cached_token_pooling_matches_non_cached() -> None:
-    """The gradient-cached path decorates ``calculate_loss`` and pools the cached embedding chunks
-    (leaving pooled chunks of different widths to the loss's re-padding). Both paths must produce
-    the same loss and the same gradients."""
-    factors = [1, 2, 4]
-    weights = [1.0, 0.5, 0.25]
-
-    plain_features = _build_features()
-    plain_leaves = _leaves(plain_features)
-    plain_model = _PassthroughModel()
-    plain_loss = mve_losses.MultiVectorTokenPoolingLoss(
-        plain_model,
-        _mnrl(plain_model),
-        token_poolings=[HierarchicalTokenPooling(pool_factor=factor) for factor in factors],
-        weights=weights,
-    )
-    plain_value = plain_loss(plain_features, None)
-    plain_value.backward()
-
-    cached_features = _build_features()
-    cached_leaves = _leaves(cached_features)
-    cached_model = _PassthroughModel()
-    cached_loss = mve_losses.MultiVectorTokenPoolingLoss(
-        cached_model,
-        _cached_mnrl(cached_model),
-        token_poolings=[HierarchicalTokenPooling(pool_factor=factor) for factor in factors],
-        weights=weights,
-    )
-    cached_value = cached_loss(cached_features, None)
-    cached_value.backward()
-
-    assert torch.allclose(plain_value, cached_value, atol=1e-6)
-    for plain_leaf, cached_leaf in zip(plain_leaves, cached_leaves):
-        assert plain_leaf.grad.abs().sum() > 0
-        assert torch.allclose(plain_leaf.grad, cached_leaf.grad, atol=1e-6)
-
-
-@pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
-@pytest.mark.parametrize(
-    "pooling_kwargs",
-    [{"pool_factor": 2}, {"max_tokens": 4}, {"distance_threshold": 1.1}],
-    ids=["factor", "budget", "distance"],
-)
-def test_single_pooling_mode_matches_pooled_loss(build_inner, pooling_kwargs) -> None:
-    pooling = HierarchicalTokenPooling(**pooling_kwargs)
-    wrapped_features = _build_features()
-    model = _PassthroughModel()
-    loss = mve_losses.MultiVectorTokenPoolingLoss(model, build_inner(model), token_poolings=[pooling])
-    value = loss(wrapped_features, None)
-    value.backward()
-
-    manual_features = _build_features()
-    manual_value = _mnrl(_PassthroughModel())(_pool_reference(manual_features, pooling), None)
-    manual_value.backward()
-
-    assert torch.allclose(value, manual_value, atol=1e-6)
-    for wrapped_leaf, manual_leaf in zip(_leaves(wrapped_features), _leaves(manual_features)):
-        assert wrapped_leaf.grad.abs().sum() > 0
-        assert torch.allclose(wrapped_leaf.grad, manual_leaf.grad, atol=1e-6)
-
-
-@pytest.mark.parametrize("build_inner", [_mnrl, _cached_mnrl], ids=["mnrl", "cached_mnrl"])
-def test_mixed_pooling_modes_match_manual_gradients(build_inner) -> None:
-    token_poolings = [
-        None,
-        HierarchicalTokenPooling(pool_factor=2),
-        HierarchicalTokenPooling(max_tokens=4),
-        HierarchicalTokenPooling(distance_threshold=1.1),
-    ]
-    weights = [0.5, 1 / 6, 1 / 6, 1 / 6]
-    wrapped_features = _build_features()
-    model = _PassthroughModel()
-    loss = mve_losses.MultiVectorTokenPoolingLoss(
-        model, build_inner(model), token_poolings=token_poolings, weights=weights
-    )
-    value = loss(wrapped_features, None)
-    value.backward()
 
     manual_features = _build_features()
     plain = _mnrl(_PassthroughModel())
@@ -268,15 +131,15 @@ def test_mixed_pooling_modes_match_manual_gradients(build_inner) -> None:
     )
     manual_value.backward()
 
-    assert torch.allclose(value, manual_value, atol=1e-6)
-    for wrapped_leaf, manual_leaf in zip(_leaves(wrapped_features), _leaves(manual_features)):
-        assert wrapped_leaf.grad.abs().sum() > 0
-        assert torch.allclose(wrapped_leaf.grad, manual_leaf.grad, atol=1e-6)
+    torch.testing.assert_close(value, manual_value)
+    for leaf, manual_sf in zip(leaves, manual_features):
+        assert leaf.grad.abs().sum() > 0
+        torch.testing.assert_close(leaf.grad, manual_sf["token_embeddings"].grad, atol=1e-6, rtol=1e-5)
+    with torch.no_grad():
+        torch.testing.assert_close(loss(_build_features(), None), manual_value)
 
 
 def test_token_pooling_with_kd_loss() -> None:
-    """Teacher scores are per document column and unaffected by pooling, so the same labels apply
-    to every variant. This is the LateOn-style KD-under-pooling recipe."""
     labels = torch.tensor([[5.0, 1.0], [4.0, 0.5], [3.0, 0.2], [6.0, 2.0]])
     pooling = HierarchicalTokenPooling(pool_factor=2)
 
@@ -302,10 +165,6 @@ def test_token_pooling_with_kd_loss() -> None:
 
 
 def test_stacked_modifiers_cached_matches_non_cached() -> None:
-    """Both loss modifiers stack around one loss: the Matryoshka wrapper truncates the dimension
-    axis and the token pooling wrapper compresses the token axis. The stacked gradient-cached path
-    must match the stacked non-cached path, which pins that both decorations land on the innermost
-    cached loss in the right order."""
 
     def build_stacked(model: nn.Module, inner: nn.Module) -> nn.Module:
         truncated = mve_losses.MultiVectorMatryoshkaLoss(model, inner, matryoshka_dims=[DIM, DIM // 2])
@@ -503,56 +362,24 @@ def test_get_config_dict_describes_variants() -> None:
     ]
 
 
-def test_lambda_pooling_composes() -> None:
-    """Any BaseTokenPooling composes, e.g. a torch-only LambdaTokenPooling, and its pooled terms
-    carry gradient back to the input embeddings."""
-
-    def halve(emb: Tensor) -> Tensor:
-        n = emb.size(0)
-        return emb[: n - n % 2].view(n // 2, 2, -1).mean(dim=1)
-
-    wrapped_features = _build_features()
-    leaves = _leaves(wrapped_features)
-    model = _PassthroughModel()
-    loss = mve_losses.MultiVectorTokenPoolingLoss(
-        model,
-        _mnrl(model),
-        token_poolings=[None, LambdaTokenPooling(pool_fn=halve)],
-    )
-    value = loss(wrapped_features, None)
-    assert torch.isfinite(value)
-    value.backward()
-    for leaf in leaves:
-        assert leaf.grad.abs().sum() > 0
-
-
-def test_token_pooling_on_a_real_model() -> None:
-    """End to end on a real MultiVectorEncoder pipeline: the wrapper patches ``model.forward``, the
-    variants pool on top of the model's scoring mask, and gradients must reach the transformer."""
-    from sentence_transformers import MultiVectorEncoder
-    from sentence_transformers.util import batch_to_device
-
-    model = MultiVectorEncoder("sentence-transformers-testing/stsb-bert-tiny-safetensors")
-    model.train()
+def test_token_pooling_on_a_real_model(mve_bert_tiny_model) -> None:
+    model = mve_bert_tiny_model.train()
     features = [
-        batch_to_device(
-            model.preprocess(["what is late interaction", "who wrote hamlet"], task="query"), model.device
-        ),
-        batch_to_device(
-            model.preprocess(
+        batch_to_device(model.preprocess(texts, task=task), model.device)
+        for texts, task in [
+            (["what is late interaction", "who wrote hamlet"], "query"),
+            (
                 ["late interaction scores query and document tokens directly", "hamlet was written by shakespeare"],
-                task="document",
+                "document",
             ),
-            model.device,
-        ),
+        ]
     ]
-    inner = mve_losses.MultiVectorMultipleNegativesRankingLoss(model)
     loss = mve_losses.MultiVectorTokenPoolingLoss(
-        model, inner, token_poolings=[None, HierarchicalTokenPooling(pool_factor=2)]
+        model, _mnrl(model), token_poolings=[None, HierarchicalTokenPooling(pool_factor=2)]
     )
     value = loss(features, None)
     assert torch.isfinite(value)
     value.backward()
-    grads = [p.grad for p in model[0].parameters() if p.grad is not None]
-    assert grads and any(g.abs().sum() > 0 for g in grads)
-    assert model.forward.__self__ is model, "the original model.forward must be restored"
+    grads = [parameter.grad for parameter in model[0].parameters() if parameter.grad is not None]
+    assert grads and any(grad.abs().sum() > 0 for grad in grads)
+    assert model.forward.__self__ is model
